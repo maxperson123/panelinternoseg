@@ -1,0 +1,542 @@
+<!doctype html>
+<html lang="es" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ZonaEpic Intelligence | Multi-Panel Console</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;700&family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,500,0,0&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="appShell">
+      <aside class="sidebar">
+        <div class="sidebarBrand">
+          <p class="sidebarEyebrow">ZonaEpic Intelligence</p>
+          <h1>Admin Console</h1>
+        </div>
+
+        <nav class="sidebarNav">
+          <button type="button" class="navLink active" data-tab="overview">
+            <span class="material-symbols-outlined">space_dashboard</span>
+            <span>Inicio</span>
+          </button>
+          <button type="button" class="navLink" data-tab="zonaEpic">
+            <span class="material-symbols-outlined">monitoring</span>
+            <span>ZonaEpic</span>
+          </button>
+          <button type="button" class="navLink" data-tab="zeus">
+            <span class="material-symbols-outlined">stadia_controller</span>
+            <span>Zeus</span>
+          </button>
+          <button type="button" class="navLink" data-tab="settings">
+            <span class="material-symbols-outlined">settings</span>
+            <span>Settings</span>
+          </button>
+        </nav>
+
+        <div class="sidebarFooter">
+          <button id="exportButton" type="button" class="sidebarAction">
+            <span class="material-symbols-outlined">download</span>
+            <span>Exportar CSV</span>
+          </button>
+
+          <div class="profileCard">
+            <div class="profileAvatar">ZI</div>
+            <div>
+              <strong>Panel Interno</strong>
+              <p>Multi Provider</p>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <main class="mainContent">
+        <header class="topbar">
+          <div class="topbarHeading">
+            <p id="topbarKicker" class="topbarKicker">Inicio</p>
+            <h2 id="topbarTitle">Resumen cruzado de ZonaEpic y Zeus</h2>
+          </div>
+
+          <div class="topbarActions">
+            <label class="searchField">
+              <span class="material-symbols-outlined">search</span>
+              <input id="searchInput" type="text" placeholder="Buscar dentro de la solapa activa..." />
+            </label>
+
+            <button id="refreshButton" type="button" class="topbarPrimary">Sync Now</button>
+          </div>
+        </header>
+
+        <div class="layout">
+          <section id="overviewView" class="tabView">
+            <section class="heroCard">
+              <div>
+                <p class="eyebrow">Panel unificado</p>
+                <h3>Seguimiento consolidado de cargas, cuentas y actividad por proveedor.</h3>
+                <p class="subtitle">
+                  Esta vista cruza el estado actual de ZonaEpic y Zeus, separa los datos de cada
+                  panel y te deja saltar directo a su análisis detallado.
+                </p>
+              </div>
+              <div class="heroBadge">
+                <span class="material-symbols-outlined">hub</span>
+                <div>
+                  <strong id="globalStatus">Esperando primera sincronización...</strong>
+                  <p id="globalStatusNote">Inicio consolidado</p>
+                </div>
+              </div>
+            </section>
+
+            <section class="overviewGrid">
+              <article class="providerCard providerZona">
+                <div class="providerCardHeader">
+                  <div>
+                    <p class="mini">Provider</p>
+                    <h3>ZonaEpic</h3>
+                  </div>
+                  <button type="button" class="ghostButton" data-open-tab="zonaEpic">Abrir</button>
+                </div>
+                <div id="overviewZonaSummary" class="providerSummary">
+                  <p class="empty">Configuralo en Settings para empezar.</p>
+                </div>
+              </article>
+
+              <article class="providerCard providerZeus">
+                <div class="providerCardHeader">
+                  <div>
+                    <p class="mini">Provider</p>
+                    <h3>Zeus</h3>
+                  </div>
+                  <button type="button" class="ghostButton" data-open-tab="zeus">Abrir</button>
+                </div>
+                <div id="overviewZeusSummary" class="providerSummary">
+                  <p class="empty">Configuralo en Settings para empezar.</p>
+                </div>
+              </article>
+            </section>
+
+            <section class="overviewInsights">
+              <div class="sectionHeader">
+                <div>
+                  <p class="sectionEyebrow">Comparativa</p>
+                  <h3>Lectura rápida del estado de los dos paneles</h3>
+                </div>
+              </div>
+              <div id="overviewComparison" class="comparisonGrid">
+                <article class="comparisonCard">
+                  <strong>Sin datos todavía</strong>
+                  <p>Guardá las credenciales de ambos paneles y corré una primera sincronización.</p>
+                </article>
+              </div>
+            </section>
+          </section>
+
+          <section id="zonaEpicView" class="tabView hidden">
+            <section class="sectionTitle">
+              <div>
+                <p class="sectionEyebrow">ZonaEpic</p>
+                <h2>Usuarios, cargas e inactividad</h2>
+              </div>
+              <span id="zonaStatusPill" class="statusPill">Sincronización pendiente</span>
+            </section>
+
+            <section class="controlsCard">
+              <div class="sectionHeader">
+                <div>
+                  <p class="sectionEyebrow">Rango activo</p>
+                  <h3>Ventana de análisis y refresco</h3>
+                </div>
+                <button id="zonaSyncButton" type="button" class="ghostButton">Sincronizar ZonaEpic</button>
+              </div>
+
+              <div class="controlsGrid controlsGridCompact">
+                <label class="field">
+                  <span>Desde</span>
+                  <input id="zonaFilterFrom" type="date" />
+                </label>
+                <label class="field">
+                  <span>Hasta</span>
+                  <input id="zonaFilterTo" type="date" />
+                </label>
+                <label class="field">
+                  <span>Refresco</span>
+                  <select id="zonaInterval">
+                    <option value="10000">10s</option>
+                    <option value="15000">15s</option>
+                    <option value="30000">30s</option>
+                    <option value="60000">60s</option>
+                  </select>
+                </label>
+                <div class="controlSyncCard">
+                  <p class="sectionEyebrow">Última sync</p>
+                  <strong id="zonaLastSync">-</strong>
+                  <span id="zonaSyncNote">Sin datos</span>
+                </div>
+              </div>
+            </section>
+
+            <section class="stats">
+              <article class="card statCard statPrimary">
+                <span class="label">Usuarios filtrados</span>
+                <strong id="zonaFilteredUsers">-</strong>
+              </article>
+              <article class="card statCard">
+                <span class="label">Usuarios totales</span>
+                <strong id="zonaTotalUsers">-</strong>
+              </article>
+              <article class="card statCard statAccent">
+                <span class="label">Cargas filtradas</span>
+                <strong id="zonaTotalLoads">-</strong>
+              </article>
+              <article class="card statCard statGlow">
+                <span class="label">Monto filtrado</span>
+                <strong id="zonaTotalAmount">-</strong>
+              </article>
+              <article class="card statCard statMono">
+                <span class="label">Última sync</span>
+                <strong id="zonaLastSyncDuplicate" class="mono">-</strong>
+              </article>
+            </section>
+
+            <section class="filtersPanel">
+              <div class="filterGroup">
+                <span class="filterLabel">Franja horaria</span>
+                <div class="segmented">
+                  <button class="segment active" data-zona-period="all">Todos</button>
+                  <button class="segment" data-zona-period="morning">Mañana</button>
+                  <button class="segment" data-zona-period="afternoon">Tarde</button>
+                  <button class="segment" data-zona-period="night">Noche</button>
+                </div>
+              </div>
+
+              <div class="filterGroup">
+                <span class="filterLabel">Monto</span>
+                <div class="segmented">
+                  <button class="segment active" data-zona-amount="all">Todos</button>
+                  <button class="segment" data-zona-amount="small">Chico</button>
+                  <button class="segment" data-zona-amount="medium">Mediano</button>
+                  <button class="segment" data-zona-amount="large">Grande</button>
+                </div>
+              </div>
+            </section>
+
+            <section class="headline">
+              <div>
+                <h2>Listas de inactividad</h2>
+                <p id="zonaActiveFilterLabel" class="headlineText">Mostrando todos los usuarios.</p>
+              </div>
+              <span class="statusPill">Monitor operativo</span>
+            </section>
+
+            <section class="inactivityGrid">
+              <article class="panel panel-warning">
+                <div class="panelAccent"></div>
+                <div class="panelHeader">
+                  <div>
+                    <p class="mini">Inactividad</p>
+                    <h3>5 a 9 días</h3>
+                  </div>
+                  <strong id="zonaCountFive">0</strong>
+                </div>
+                <div class="panelTools panelToolsGrid" data-zona-panel="five">
+                  <label><span>Filtrar por</span><select data-role="filter-field"><option value="amount">Monto</option><option value="loads">Cargas</option><option value="date">Fecha</option></select></label>
+                  <label><span>Regla</span><select data-role="filter-operator"><option value="all">Todos</option><option value="gte">Mayor o igual</option><option value="lte">Menor o igual</option></select></label>
+                  <label><span>Valor</span><input data-role="filter-value" type="text" placeholder="3000 o 2026-06-10" /></label>
+                  <label><span>Ordenar por</span><select data-role="sort-field"><option value="date">Fecha</option><option value="amount">Monto</option><option value="loads">Cargas</option></select></label>
+                  <label><span>Dirección</span><select data-role="sort-direction"><option value="desc">Desc</option><option value="asc">Asc</option></select></label>
+                </div>
+                <div id="zonaListFive" class="userList"></div>
+              </article>
+
+              <article class="panel">
+                <div class="panelAccent panelAccentDanger"></div>
+                <div class="panelHeader">
+                  <div>
+                    <p class="mini">Inactividad</p>
+                    <h3>10 a 14 días</h3>
+                  </div>
+                  <strong id="zonaCountTen">0</strong>
+                </div>
+                <div class="panelTools panelToolsGrid" data-zona-panel="ten">
+                  <label><span>Filtrar por</span><select data-role="filter-field"><option value="amount">Monto</option><option value="loads">Cargas</option><option value="date">Fecha</option></select></label>
+                  <label><span>Regla</span><select data-role="filter-operator"><option value="all">Todos</option><option value="gte">Mayor o igual</option><option value="lte">Menor o igual</option></select></label>
+                  <label><span>Valor</span><input data-role="filter-value" type="text" placeholder="3000 o 2026-06-10" /></label>
+                  <label><span>Ordenar por</span><select data-role="sort-field"><option value="date">Fecha</option><option value="amount">Monto</option><option value="loads">Cargas</option></select></label>
+                  <label><span>Dirección</span><select data-role="sort-direction"><option value="desc">Desc</option><option value="asc">Asc</option></select></label>
+                </div>
+                <div id="zonaListTen" class="userList"></div>
+              </article>
+
+              <article class="panel">
+                <div class="panelAccent panelAccentCritical"></div>
+                <div class="panelHeader">
+                  <div>
+                    <p class="mini">Inactividad</p>
+                    <h3>15 días o más</h3>
+                  </div>
+                  <strong id="zonaCountFifteen">0</strong>
+                </div>
+                <div class="panelTools panelToolsGrid" data-zona-panel="fifteen">
+                  <label><span>Filtrar por</span><select data-role="filter-field"><option value="amount">Monto</option><option value="loads">Cargas</option><option value="date">Fecha</option></select></label>
+                  <label><span>Regla</span><select data-role="filter-operator"><option value="all">Todos</option><option value="gte">Mayor o igual</option><option value="lte">Menor o igual</option></select></label>
+                  <label><span>Valor</span><input data-role="filter-value" type="text" placeholder="3000 o 2026-06-10" /></label>
+                  <label><span>Ordenar por</span><select data-role="sort-field"><option value="date">Fecha</option><option value="amount">Monto</option><option value="loads">Cargas</option></select></label>
+                  <label><span>Dirección</span><select data-role="sort-direction"><option value="desc">Desc</option><option value="asc">Asc</option></select></label>
+                </div>
+                <div id="zonaListFifteen" class="userList"></div>
+              </article>
+            </section>
+
+            <section class="headline rankingsHeadline">
+              <div>
+                <h2>Top de cargas</h2>
+                <p class="headlineText">Ranking de los 100 jugadores con mayor monto cargado.</p>
+              </div>
+            </section>
+
+            <section class="rankingsGrid">
+              <article class="panel panel-ranking">
+                <div class="panelHeader">
+                  <div>
+                    <p class="mini">Top 100</p>
+                    <h3>Semana</h3>
+                  </div>
+                  <strong id="zonaCountWeek">0</strong>
+                </div>
+                <div class="panelTools panelToolsGrid" data-zona-panel="week">
+                  <label><span>Filtrar por</span><select data-role="filter-field"><option value="amount">Monto</option><option value="loads">Cargas</option><option value="date">Fecha</option></select></label>
+                  <label><span>Regla</span><select data-role="filter-operator"><option value="all">Todos</option><option value="gte">Mayor o igual</option><option value="lte">Menor o igual</option></select></label>
+                  <label><span>Valor</span><input data-role="filter-value" type="text" placeholder="3000 o 2026-06-10" /></label>
+                  <label><span>Ordenar por</span><select data-role="sort-field"><option value="amount">Monto</option><option value="loads">Cargas</option><option value="date">Fecha</option></select></label>
+                  <label><span>Dirección</span><select data-role="sort-direction"><option value="desc">Desc</option><option value="asc">Asc</option></select></label>
+                </div>
+                <div id="zonaWeekRanking" class="rankingList"></div>
+              </article>
+
+              <article class="panel panel-ranking panel-ranking-secondary">
+                <div class="panelHeader">
+                  <div>
+                    <p class="mini">Top 100</p>
+                    <h3>Mes</h3>
+                  </div>
+                  <strong id="zonaCountMonth">0</strong>
+                </div>
+                <div class="panelTools panelToolsGrid" data-zona-panel="month">
+                  <label><span>Filtrar por</span><select data-role="filter-field"><option value="amount">Monto</option><option value="loads">Cargas</option><option value="date">Fecha</option></select></label>
+                  <label><span>Regla</span><select data-role="filter-operator"><option value="all">Todos</option><option value="gte">Mayor o igual</option><option value="lte">Menor o igual</option></select></label>
+                  <label><span>Valor</span><input data-role="filter-value" type="text" placeholder="3000 o 2026-06-10" /></label>
+                  <label><span>Ordenar por</span><select data-role="sort-field"><option value="amount">Monto</option><option value="loads">Cargas</option><option value="date">Fecha</option></select></label>
+                  <label><span>Dirección</span><select data-role="sort-direction"><option value="desc">Desc</option><option value="asc">Asc</option></select></label>
+                </div>
+                <div id="zonaMonthRanking" class="rankingList"></div>
+              </article>
+            </section>
+          </section>
+
+          <section id="zeusView" class="tabView hidden">
+            <section class="sectionTitle">
+              <div>
+                <p class="sectionEyebrow">Zeus</p>
+                <h2>Movimientos del panel madre y resumen operativo</h2>
+              </div>
+              <span id="zeusStatusPill" class="statusPill">Sincronización pendiente</span>
+            </section>
+
+            <section class="controlsCard">
+              <div class="sectionHeader">
+                <div>
+                  <p class="sectionEyebrow">Rango activo</p>
+                  <h3>Ventana de análisis y refresco</h3>
+                </div>
+                <button id="zeusSyncButton" type="button" class="ghostButton">Sincronizar Zeus</button>
+              </div>
+
+              <div class="controlsGrid controlsGridCompact">
+                <label class="field">
+                  <span>Desde</span>
+                  <input id="zeusFilterFrom" type="date" />
+                </label>
+                <label class="field">
+                  <span>Hasta</span>
+                  <input id="zeusFilterTo" type="date" />
+                </label>
+                <label class="field">
+                  <span>Refresco</span>
+                  <select id="zeusInterval">
+                    <option value="15000">15s</option>
+                    <option value="30000">30s</option>
+                    <option value="60000">60s</option>
+                    <option value="120000">120s</option>
+                  </select>
+                </label>
+                <div class="controlSyncCard">
+                  <p class="sectionEyebrow">Última sync</p>
+                  <strong id="zeusLastSync">-</strong>
+                  <span id="zeusSyncNote">Sin datos</span>
+                </div>
+              </div>
+            </section>
+
+            <section class="stats">
+              <article class="card statCard statPrimary">
+                <span class="label">Movimientos</span>
+                <strong id="zeusTotalTransactions">-</strong>
+              </article>
+              <article class="card statCard">
+                <span class="label">Ingresos</span>
+                <strong id="zeusIncomeAmount">-</strong>
+              </article>
+              <article class="card statCard statAccent">
+                <span class="label">Egresos</span>
+                <strong id="zeusExpenseAmount">-</strong>
+              </article>
+              <article class="card statCard statGlow">
+                <span class="label">Balance actual</span>
+                <strong id="zeusBalanceAmount">-</strong>
+              </article>
+              <article class="card statCard statMono">
+                <span class="label">Último movimiento</span>
+                <strong id="zeusLastMovement" class="mono">-</strong>
+              </article>
+            </section>
+
+            <section class="filtersPanel">
+              <div class="filterGroup">
+                <span class="filterLabel">Operación</span>
+                <div class="segmented">
+                  <button class="segment active" data-zeus-operation="all">Todas</button>
+                  <button class="segment" data-zeus-operation="income">Ingresos</button>
+                  <button class="segment" data-zeus-operation="expense">Egresos</button>
+                  <button class="segment" data-zeus-operation="other">Otros</button>
+                </div>
+              </div>
+
+              <div class="filterGroup">
+                <span class="filterLabel">Monto</span>
+                <div class="segmented">
+                  <button class="segment active" data-zeus-amount="all">Todos</button>
+                  <button class="segment" data-zeus-amount="small">Chico</button>
+                  <button class="segment" data-zeus-amount="medium">Mediano</button>
+                  <button class="segment" data-zeus-amount="large">Grande</button>
+                </div>
+              </div>
+            </section>
+
+            <section class="headline">
+              <div>
+                <h2>Movimientos recientes</h2>
+                <p id="zeusActiveFilterLabel" class="headlineText">Mostrando todos los movimientos del rango.</p>
+              </div>
+              <span class="statusPill">API REST</span>
+            </section>
+
+            <section class="rankingsGrid zeusGrid">
+              <article class="panel panel-ranking">
+                <div class="panelHeader">
+                  <div>
+                    <p class="mini">Listado</p>
+                    <h3>Transacciones</h3>
+                  </div>
+                  <strong id="zeusTransactionsCount">0</strong>
+                </div>
+                <div class="panelTools panelToolsGrid" data-zeus-panel="transactions">
+                  <label><span>Filtrar por</span><select data-role="filter-field"><option value="amount">Monto</option><option value="date">Fecha</option><option value="loads">Cantidad</option></select></label>
+                  <label><span>Regla</span><select data-role="filter-operator"><option value="all">Todos</option><option value="gte">Mayor o igual</option><option value="lte">Menor o igual</option></select></label>
+                  <label><span>Valor</span><input data-role="filter-value" type="text" placeholder="3000 o 2026-06-10" /></label>
+                  <label><span>Ordenar por</span><select data-role="sort-field"><option value="date">Fecha</option><option value="amount">Monto</option></select></label>
+                  <label><span>Dirección</span><select data-role="sort-direction"><option value="desc">Desc</option><option value="asc">Asc</option></select></label>
+                </div>
+                <div id="zeusTransactionsList" class="rankingList"></div>
+              </article>
+
+              <article class="panel panel-ranking panel-ranking-secondary">
+                <div class="panelHeader">
+                  <div>
+                    <p class="mini">Ranking</p>
+                    <h3>Días con más ingresos</h3>
+                  </div>
+                  <strong id="zeusTopDaysCount">0</strong>
+                </div>
+                <div class="panelTools panelToolsGrid" data-zeus-panel="days">
+                  <label><span>Filtrar por</span><select data-role="filter-field"><option value="amount">Monto</option><option value="loads">Cantidad</option><option value="date">Fecha</option></select></label>
+                  <label><span>Regla</span><select data-role="filter-operator"><option value="all">Todos</option><option value="gte">Mayor o igual</option><option value="lte">Menor o igual</option></select></label>
+                  <label><span>Valor</span><input data-role="filter-value" type="text" placeholder="3000 o 2026-06-10" /></label>
+                  <label><span>Ordenar por</span><select data-role="sort-field"><option value="amount">Monto</option><option value="loads">Cantidad</option><option value="date">Fecha</option></select></label>
+                  <label><span>Dirección</span><select data-role="sort-direction"><option value="desc">Desc</option><option value="asc">Asc</option></select></label>
+                </div>
+                <div id="zeusTopDaysList" class="rankingList"></div>
+              </article>
+            </section>
+          </section>
+
+          <section id="settingsView" class="tabView hidden">
+            <section class="sectionTitle">
+              <div>
+                <p class="sectionEyebrow">Settings</p>
+                <h2>Credenciales guardadas en este navegador</h2>
+              </div>
+              <span id="settingsStatusPill" class="statusPill">Sin guardar cambios</span>
+            </section>
+
+            <section class="settingsGrid">
+              <article class="controlsCard">
+                <div class="sectionHeader">
+                  <div>
+                    <p class="sectionEyebrow">ZonaEpic</p>
+                    <h3>Cookie y token del panel</h3>
+                  </div>
+                  <button id="saveZonaSettingsButton" type="button" class="ghostButton">Guardar</button>
+                </div>
+                <div class="controlsGrid">
+                  <label class="field control-base">
+                    <span>Link panel</span>
+                    <input id="settingsZonaBaseUrl" type="url" placeholder="https://admin.zonaepic.vip" />
+                  </label>
+                  <label class="field">
+                    <span>PHPSESSID</span>
+                    <input id="settingsZonaSessionId" type="text" placeholder="doomss07..." />
+                  </label>
+                  <label class="field">
+                    <span>Token</span>
+                    <input id="settingsZonaToken" type="password" placeholder="190728..." />
+                  </label>
+                </div>
+              </article>
+
+              <article class="controlsCard">
+                <div class="sectionHeader">
+                  <div>
+                    <p class="sectionEyebrow">Zeus</p>
+                    <h3>Acceso al panel REST</h3>
+                  </div>
+                  <button id="saveZeusSettingsButton" type="button" class="ghostButton">Guardar</button>
+                </div>
+                <div class="controlsGrid">
+                  <label class="field control-base">
+                    <span>Link panel</span>
+                    <input id="settingsZeusBaseUrl" type="url" placeholder="https://admin.casinozeus.tech" />
+                  </label>
+                  <label class="field">
+                    <span>Usuario</span>
+                    <input id="settingsZeusUsername" type="text" placeholder="Jotajota" />
+                  </label>
+                  <label class="field">
+                    <span>Clave</span>
+                    <input id="settingsZeusPassword" type="password" placeholder="********" />
+                  </label>
+                </div>
+              </article>
+            </section>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
