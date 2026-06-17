@@ -83,7 +83,9 @@ function getZeusRequestConfig(overrides = {}) {
     authUrl: `${baseUrl}/api/backoffice/v1/auth/signin`,
     profileUrl: `${baseUrl}/api/backoffice/v1/users/me`,
     transactionsUrl: `${baseUrl}/api/backoffice/v1/project/account-transactions`,
-    totalAmountUrl: `${baseUrl}/api/backoffice/v1/project/account-transactions/total-amount`
+    totalAmountUrl: `${baseUrl}/api/backoffice/v1/project/account-transactions/total-amount`,
+    playerTransfersUrl: `${baseUrl}/api/backoffice/v1/account-transfers/player`,
+    playerStatsUrl: `${baseUrl}/api/backoffice/v1/player-account-transaction-stats`
   };
 }
 
@@ -226,6 +228,16 @@ async function fetchZeusJson(url, accessToken, searchParams = null) {
 
   if (searchParams) {
     Object.entries(searchParams).forEach(([key, value]) => {
+      if (Array.isArray(value)) {
+        requestUrl.searchParams.delete(key);
+        value.forEach((entry) => {
+          if (entry !== undefined && entry !== null && entry !== "") {
+            requestUrl.searchParams.append(key, String(entry));
+          }
+        });
+        return;
+      }
+
       if (value !== undefined && value !== null && value !== "") {
         requestUrl.searchParams.set(key, String(value));
       }
@@ -295,6 +307,68 @@ async function fetchAllZeusTransactions({ config, accessToken, fromDate, toDateE
 
   return {
     totalCount,
+    rows
+  };
+}
+
+async function fetchAllZeusPlayerTransfers({
+  config,
+  accessToken,
+  agentUserId,
+  fromDate,
+  toDateExclusive,
+  pageSize
+}) {
+  const { dateFrom, dateTo } = toZeusIsoRange(fromDate, toDateExclusive);
+  const rows = [];
+  let offset = 0;
+
+  while (true) {
+    const requestUrl = new URL(config.playerTransfersUrl);
+    requestUrl.searchParams.set("agentUserId", String(agentUserId));
+    requestUrl.searchParams.set("dateFrom", dateFrom);
+    requestUrl.searchParams.set("dateTo", dateTo);
+    requestUrl.searchParams.set("offset", String(offset));
+    requestUrl.searchParams.set("limit", String(pageSize));
+    requestUrl.searchParams.append("operations[]", "INCOME");
+    requestUrl.searchParams.append("operations[]", "OUTCOME");
+
+    const response = await fetch(requestUrl, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
+        "User-Agent": "Mozilla/5.0"
+      }
+    });
+
+    let payload;
+
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+
+    if (!response.ok) {
+      const message =
+        payload?.error?.message ||
+        payload?.message ||
+        `Zeus devolvio ${response.status} al consultar ${requestUrl.pathname}`;
+      throw new Error(message);
+    }
+
+    const items = Array.isArray(payload?.items) ? payload.items : [];
+    rows.push(...items);
+
+    if (!items.length || items.length < pageSize) {
+      break;
+    }
+
+    offset += items.length;
+  }
+
+  return {
+    totalCount: rows.length,
     rows
   };
 }
@@ -921,106 +995,174 @@ function classifyZeusOperation(operation) {
   return "other";
 }
 
-function buildZeusAnalytics(transactions, profile) {
-  const balanceAccount = Array.isArray(profile?.accounts)
-    ? profile.accounts.find((item) => String(item.currency || "").toUpperCase() === "ARS") || profile.accounts[0]
-    : null;
-  const dailyMap = new Map();
-  let totalIncome = 0;
-  let totalExpense = 0;
-  let otherAmount = 0;
-  let lastTransactionAt = null;
+function getZeusTransferPlayer(item) {
+  if (String(item?.toUserRole || "").toLowerCase() === "player") {
+    return {
+      userId: item.toUserId,
+      username: String(item.toUsername || "").trim()
+    };
+  }
 
-  const normalizedTransactions = transactions
+  if (String(item?.fromUserRole || "").toLowerCase() === "player") {
+    return {
+      userId: item.fromUserId,
+      username: String(item.fromUsername || "").trim()
+    };
+  }
+
+  return null;
+}
+
+function buildZeusTopRanking(loads, days) {
+  const now = new Date();
+  const cutoff = new Date(now);
+  cutoff.setDate(cutoff.getDate() - days);
+  const usersMap = new Map();
+
+  for (const item of loads) {
+    if (item.createdAtDate < cutoff) {
+      continue;
+    }
+
+    const current = usersMap.get(item.username) || {
+      username: item.username,
+      totalAmount: 0,
+      loadsCount: 0,
+      lastLoadAt: item.createdAtDate
+    };
+
+    current.totalAmount += item.amount;
+    current.loadsCount += 1;
+
+    if (item.createdAtDate > current.lastLoadAt) {
+      current.lastLoadAt = item.createdAtDate;
+    }
+
+    usersMap.set(item.username, current);
+  }
+
+  return Array.from(usersMap.values())
+    .sort((left, right) => {
+      if (right.totalAmount !== left.totalAmount) {
+        return right.totalAmount - left.totalAmount;
+      }
+
+      return right.loadsCount - left.loadsCount;
+    })
+    .slice(0, 100)
+    .map((user, index) => ({
+      rank: index + 1,
+      username: user.username,
+      totalAmount: user.totalAmount,
+      loadsCount: user.loadsCount,
+      lastLoadAtDisplay: formatDateTime(user.lastLoadAt),
+      metricAmount: user.totalAmount,
+      metricLoads: user.loadsCount,
+      metricDate: user.lastLoadAt.getTime()
+    }));
+}
+
+function buildZeusAnalytics(transfers) {
+  const usersMap = new Map();
+  const now = new Date();
+  const normalizedTransfers = transfers
     .map((item) => {
+      const player = getZeusTransferPlayer(item);
+      const username = String(player?.username || "").trim();
+      const createdAtDate = new Date(item.createdAt);
       const amount = normalizeDecimal(item.amount);
-      const balanceAfter = normalizeDecimal(item.balanceAfter);
-      const createdAt = new Date(item.createdAt);
-      const operationGroup = classifyZeusOperation(item.operation);
-
-      if (operationGroup === "income") {
-        totalIncome += amount;
-      } else if (operationGroup === "expense") {
-        totalExpense += amount;
-      } else {
-        otherAmount += amount;
-      }
-
-      if (!lastTransactionAt || createdAt > lastTransactionAt) {
-        lastTransactionAt = createdAt;
-      }
-
-      const dayKey = createdAt.toISOString().slice(0, 10);
-      const dailyEntry = dailyMap.get(dayKey) || {
-        date: dayKey,
-        totalIncome: 0,
-        totalExpense: 0,
-        totalOperations: 0,
-        lastTransactionAt: createdAt
-      };
-
-      if (operationGroup === "income") {
-        dailyEntry.totalIncome += amount;
-      } else if (operationGroup === "expense") {
-        dailyEntry.totalExpense += amount;
-      }
-
-      dailyEntry.totalOperations += 1;
-      if (createdAt > dailyEntry.lastTransactionAt) {
-        dailyEntry.lastTransactionAt = createdAt;
-      }
-      dailyMap.set(dayKey, dailyEntry);
+      const operation = String(item.operation || "UNKNOWN").toUpperCase();
 
       return {
         id: item.id,
+        username,
+        userId: player?.userId || null,
         amount,
-        amountLabel: amount.toLocaleString("es-AR"),
-        balanceAfter,
-        createdAt: createdAt.toISOString(),
-        createdAtDisplay: formatDateTime(createdAt),
-        operation: String(item.operation || "UNKNOWN"),
-        operationGroup,
+        operation,
+        createdAt: item.createdAt,
+        createdAtDate,
+        createdAtDisplay: formatDateTime(createdAtDate),
         metricAmount: amount,
-        metricDate: createdAt.getTime(),
-        metricLoads: 1
+        metricLoads: 1,
+        metricDate: createdAtDate.getTime()
       };
     })
-    .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
+    .filter((item) => item.username && item.amount > 0 && !Number.isNaN(item.createdAtDate.getTime()))
+    .sort((left, right) => right.createdAtDate - left.createdAtDate);
 
-  const topDays = Array.from(dailyMap.values())
-    .map((item) => ({
-      ...item,
-      netAmount: item.totalIncome - item.totalExpense,
-      dateDisplay: new Intl.DateTimeFormat("es-AR", {
-        dateStyle: "medium",
+  const loadTransfers = normalizedTransfers.filter((item) => item.operation === "INCOME");
+
+  for (const item of loadTransfers) {
+    const hour = Number(
+      new Intl.DateTimeFormat("en-US", {
+        hour: "2-digit",
+        hour12: false,
         timeZone
-      }).format(new Date(`${item.date}T00:00:00-03:00`)),
-      lastTransactionAtDisplay: formatDateTime(item.lastTransactionAt),
-      metricAmount: item.totalIncome,
-      metricDate: item.lastTransactionAt.getTime(),
-      metricLoads: item.totalOperations
-    }))
-    .sort((left, right) => {
-      if (right.totalIncome !== left.totalIncome) {
-        return right.totalIncome - left.totalIncome;
-      }
-      return right.totalOperations - left.totalOperations;
+      }).format(item.createdAtDate)
+    );
+    const period =
+      hour >= 6 && hour < 12 ? "morning" : hour >= 12 && hour < 20 ? "afternoon" : "night";
+    const current = usersMap.get(item.username) || {
+      username: item.username,
+      totalAmount: 0,
+      loadsCount: 0,
+      lastLoadDate: item.createdAtDate,
+      periodCounts: { morning: 0, afternoon: 0, night: 0 }
+    };
+
+    current.totalAmount += item.amount;
+    current.loadsCount += 1;
+    current.periodCounts[period] += 1;
+
+    if (item.createdAtDate >= current.lastLoadDate) {
+      current.lastLoadDate = item.createdAtDate;
+    }
+
+    usersMap.set(item.username, current);
+  }
+
+  const users = Array.from(usersMap.values())
+    .map((user) => {
+      const preferredPeriod = ["morning", "afternoon", "night"].reduce((best, current) => {
+        return user.periodCounts[current] > user.periodCounts[best] ? current : best;
+      }, "morning");
+      const averageAmount = user.loadsCount ? user.totalAmount / user.loadsCount : 0;
+      const daysSinceLastLoad = Math.floor((now.getTime() - user.lastLoadDate.getTime()) / 86400000);
+      const inactivityBucket =
+        daysSinceLastLoad >= 15 ? "fifteen" : daysSinceLastLoad >= 10 ? "ten" : daysSinceLastLoad >= 5 ? "five" : null;
+
+      return {
+        username: user.username,
+        loadsCount: user.loadsCount,
+        totalAmount: user.totalAmount,
+        averageAmount,
+        lastLoadAt: user.lastLoadDate.toISOString(),
+        lastLoadAtDisplay: formatDateTime(user.lastLoadDate),
+        preferredPeriod,
+        preferredAmountBucket: averageAmount >= 30000 ? "large" : averageAmount >= 10000 ? "medium" : averageAmount >= 3000 ? "small" : "other",
+        daysSinceLastLoad,
+        inactivityBucket,
+        metricAmount: averageAmount,
+        metricLoads: user.loadsCount,
+        metricDate: user.lastLoadDate.getTime()
+      };
     })
-    .slice(0, 100);
+    .sort((left, right) => right.daysSinceLastLoad - left.daysSinceLastLoad);
 
   return {
     summary: {
-      totalTransactions: normalizedTransactions.length,
-      totalIncome,
-      totalExpense,
-      totalNet: totalIncome - totalExpense,
-      otherAmount,
-      balanceArs: normalizeDecimal(balanceAccount?.amount),
-      lastTransactionAt: lastTransactionAt ? lastTransactionAt.toISOString() : null,
-      lastTransactionAtDisplay: lastTransactionAt ? formatDateTime(lastTransactionAt) : "-"
+      uniqueUsers: users.length,
+      totalLoads: users.reduce((sum, user) => sum + user.loadsCount, 0),
+      totalAmount: users.reduce((sum, user) => sum + user.totalAmount, 0),
+      inactiveFive: users.filter((user) => user.inactivityBucket === "five").length,
+      inactiveTen: users.filter((user) => user.inactivityBucket === "ten").length,
+      inactiveFifteen: users.filter((user) => user.inactivityBucket === "fifteen").length
     },
-    transactions: normalizedTransactions,
-    topDays
+    rankings: {
+      week: buildZeusTopRanking(loadTransfers, 7),
+      month: buildZeusTopRanking(loadTransfers, 30)
+    },
+    users
   };
 }
 
@@ -1200,23 +1342,34 @@ async function handleApiZeusSnapshot(requestUrl, response) {
       parsedTo ? addDays(parsedTo, 1) : null,
       defaultLookbackDays
     );
-    const pageSize = Math.min(30, Number(body.limit || process.env.ZEUS_PAGE_SIZE || 30));
+    const pageSize = Math.min(100, Number(body.limit || process.env.ZEUS_PAGE_SIZE || 100));
     const auth = await loginZeus(config);
-    const [profile, transactionsPayload, totalAmountPayload] = await Promise.all([
-      fetchZeusJson(
-        `${config.profileUrl}?includeAccounts=true&includeCreator=true&includePermissions=true&includeAgentSettings=true`,
-        auth.accessToken
-      ),
-      fetchAllZeusTransactions({
+    const profile = await fetchZeusJson(
+      `${config.profileUrl}?includeAccounts=true&includeCreator=true&includePermissions=true&includeAgentSettings=true`,
+      auth.accessToken
+    );
+    const agentUserId = profile?.id || profile?.userId || auth.user?.id || auth.user?.userId;
+
+    if (!agentUserId) {
+      throw new Error("No pude obtener el agentUserId de Zeus.");
+    }
+
+    const [transfersPayload, statsPayload] = await Promise.all([
+      fetchAllZeusPlayerTransfers({
         config,
         accessToken: auth.accessToken,
+        agentUserId,
         fromDate: safeRange.from,
         toDateExclusive: safeRange.toExclusive,
         pageSize
       }),
-      fetchZeusJson(config.totalAmountUrl, auth.accessToken, toZeusIsoRange(safeRange.from, safeRange.toExclusive))
+      fetchZeusJson(config.playerStatsUrl, auth.accessToken, {
+        agentUserId,
+        ...toZeusIsoRange(safeRange.from, safeRange.toExclusive),
+        "operations[]": ["INCOME", "OUTCOME"]
+      }).catch(() => null)
     ]);
-    const analytics = buildZeusAnalytics(transactionsPayload.rows, profile);
+    const analytics = buildZeusAnalytics(transfersPayload.rows);
 
     sendJson(response, 200, {
       meta: {
@@ -1226,11 +1379,13 @@ async function handleApiZeusSnapshot(requestUrl, response) {
         username: config.username,
         filterFrom: toInputDateValue(safeRange.from),
         filterTo: toInputDateValue(addDays(safeRange.toExclusive, -1)),
-        totalRows: transactionsPayload.rows.length,
-        availableCount: transactionsPayload.totalCount,
-        totalAmount: normalizeDecimal(totalAmountPayload?.totalAmount)
+        totalRows: transfersPayload.rows.length,
+        availableCount: transfersPayload.totalCount,
+        agentUserId,
+        totalAmount: normalizeDecimal(statsPayload?.totalDepositAmount)
       },
       profile,
+      stats: statsPayload,
       analytics
     });
   } catch (error) {
