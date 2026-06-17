@@ -1342,7 +1342,7 @@ async function handleApiZeusSnapshot(requestUrl, response) {
       parsedTo ? addDays(parsedTo, 1) : null,
       defaultLookbackDays
     );
-    const pageSize = Math.min(100, Number(body.limit || process.env.ZEUS_PAGE_SIZE || 100));
+    const pageSize = Math.min(30, Number(body.limit || process.env.ZEUS_PAGE_SIZE || 30));
     const auth = await loginZeus(config);
     const profile = await fetchZeusJson(
       `${config.profileUrl}?includeAccounts=true&includeCreator=true&includePermissions=true&includeAgentSettings=true`,
