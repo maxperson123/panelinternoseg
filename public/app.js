@@ -61,17 +61,23 @@ const elements = {
     syncButton: document.querySelector("#zeusSyncButton"),
     lastSync: document.querySelector("#zeusLastSync"),
     syncNote: document.querySelector("#zeusSyncNote"),
-    totalTransactions: document.querySelector("#zeusTotalTransactions"),
-    incomeAmount: document.querySelector("#zeusIncomeAmount"),
-    expenseAmount: document.querySelector("#zeusExpenseAmount"),
-    balanceAmount: document.querySelector("#zeusBalanceAmount"),
-    lastMovement: document.querySelector("#zeusLastMovement"),
+    filteredUsers: document.querySelector("#zeusFilteredUsers"),
+    totalUsers: document.querySelector("#zeusTotalUsers"),
+    totalLoads: document.querySelector("#zeusTotalLoads"),
+    totalAmount: document.querySelector("#zeusTotalAmount"),
+    lastSyncDuplicate: document.querySelector("#zeusLastSyncDuplicate"),
     activeFilterLabel: document.querySelector("#zeusActiveFilterLabel"),
-    transactionsCount: document.querySelector("#zeusTransactionsCount"),
-    topDaysCount: document.querySelector("#zeusTopDaysCount"),
-    transactionsList: document.querySelector("#zeusTransactionsList"),
-    topDaysList: document.querySelector("#zeusTopDaysList"),
-    operationButtons: Array.from(document.querySelectorAll("[data-zeus-operation]")),
+    countFive: document.querySelector("#zeusCountFive"),
+    countTen: document.querySelector("#zeusCountTen"),
+    countFifteen: document.querySelector("#zeusCountFifteen"),
+    listFive: document.querySelector("#zeusListFive"),
+    listTen: document.querySelector("#zeusListTen"),
+    listFifteen: document.querySelector("#zeusListFifteen"),
+    countWeek: document.querySelector("#zeusCountWeek"),
+    countMonth: document.querySelector("#zeusCountMonth"),
+    weekRanking: document.querySelector("#zeusWeekRanking"),
+    monthRanking: document.querySelector("#zeusMonthRanking"),
+    periodButtons: Array.from(document.querySelectorAll("[data-zeus-period]")),
     amountButtons: Array.from(document.querySelectorAll("[data-zeus-amount]")),
     toolPanels: Array.from(document.querySelectorAll("[data-zeus-panel]"))
   },
@@ -149,7 +155,7 @@ const state = {
     amount: "all"
   },
   zeusFilters: {
-    operation: "all",
+    period: "all",
     amount: "all"
   },
   panelState: {
@@ -161,8 +167,11 @@ const state = {
       month: { filterField: "amount", filterOperator: "all", filterValue: "", sortField: "amount", sortDirection: "desc" }
     },
     zeus: {
-      transactions: { filterField: "amount", filterOperator: "all", filterValue: "", sortField: "date", sortDirection: "desc" },
-      days: { filterField: "amount", filterOperator: "all", filterValue: "", sortField: "amount", sortDirection: "desc" }
+      five: { filterField: "amount", filterOperator: "all", filterValue: "", sortField: "date", sortDirection: "desc" },
+      ten: { filterField: "amount", filterOperator: "all", filterValue: "", sortField: "date", sortDirection: "desc" },
+      fifteen: { filterField: "amount", filterOperator: "all", filterValue: "", sortField: "date", sortDirection: "desc" },
+      week: { filterField: "amount", filterOperator: "all", filterValue: "", sortField: "amount", sortDirection: "desc" },
+      month: { filterField: "amount", filterOperator: "all", filterValue: "", sortField: "amount", sortDirection: "desc" }
     }
   },
   currentViews: {
@@ -945,7 +954,9 @@ function renderZonaUserCard(user) {
   return `
     <article class="userCard copyableCard" data-username="${escapeHtml(user.username)}">
       <header>
-        <strong>${escapeHtml(user.username)}</strong>
+        <button type="button" class="copyUsernameButton" data-copy-username="${escapeHtml(user.username)}">
+          ${escapeHtml(user.username)}
+        </button>
         <span>${formatCurrency(user.averageAmount)}</span>
       </header>
       <dl>
@@ -967,7 +978,9 @@ function renderZonaRankingItem(item) {
   return `
     <article class="rankingItem copyableCard" data-username="${escapeHtml(item.username)}">
       <div class="rankingTop">
-        <strong>#${item.rank} ${escapeHtml(item.username)}</strong>
+        <button type="button" class="copyUsernameButton" data-copy-username="${escapeHtml(item.username)}">
+          #${item.rank} ${escapeHtml(item.username)}
+        </button>
         <span>${formatCurrency(item.totalAmount)}</span>
       </div>
       <div class="rankingMeta">
@@ -1113,14 +1126,14 @@ function getZonaAmountLabel(value) {
   }[value] || "todos los montos";
 }
 
-function applyZeusBaseFilters(transactions) {
-  return transactions.filter((item) => {
-    const byOperation =
-      state.zeusFilters.operation === "all" || item.operationGroup === state.zeusFilters.operation;
+function applyZeusFilters(users) {
+  return users.filter((user) => {
+    const byPeriod =
+      state.zeusFilters.period === "all" || user.preferredPeriod === state.zeusFilters.period;
     const byAmount =
       state.zeusFilters.amount === "all" ||
-      getAmountBucket(Math.abs(item.amount)) === state.zeusFilters.amount;
-    return byOperation && byAmount;
+      user.preferredAmountBucket === state.zeusFilters.amount;
+    return byPeriod && byAmount;
   });
 }
 
@@ -1131,63 +1144,16 @@ function applyZeusSearch(items) {
 
   return items.filter((item) =>
     [
-      item.operation,
-      item.operationGroup,
-      item.dateDisplay,
-      item.createdAtDisplay,
-      item.amount,
-      item.totalIncome,
-      item.totalOperations
+      item.username,
+      item.lastLoadAtDisplay,
+      item.averageAmount,
+      item.loadsCount,
+      item.totalAmount
     ]
       .join(" ")
       .toLowerCase()
       .includes(state.searchQuery)
   );
-}
-
-function renderZeusTransactionCard(item) {
-  const sign = item.operationGroup === "expense" ? "-" : "+";
-  return `
-    <article class="zeusTransactionCard">
-      <div class="zeusCardTop">
-        <strong>${escapeHtml(item.operation)}</strong>
-        <span>${sign}${formatCurrency(item.amount)}</span>
-      </div>
-      <div class="zeusMetaGrid">
-        <div>
-          <span class="zeusMetaLabel">Balance después</span>
-          <strong class="zeusMetaValue">${formatCurrency(item.balanceAfter)}</strong>
-        </div>
-        <div>
-          <span class="zeusMetaLabel">Grupo</span>
-          <strong class="zeusMetaValue">${escapeHtml(item.operationGroup)}</strong>
-        </div>
-      </div>
-      <p class="zeusCardMeta">${escapeHtml(item.createdAtDisplay)}</p>
-    </article>
-  `;
-}
-
-function renderZeusDayCard(item) {
-  return `
-    <article class="zeusDayCard">
-      <div class="zeusCardTop">
-        <strong>${escapeHtml(item.dateDisplay)}</strong>
-        <span>${formatCurrency(item.totalIncome)}</span>
-      </div>
-      <div class="zeusMetaGrid">
-        <div>
-          <span class="zeusMetaLabel">Operaciones</span>
-          <strong class="zeusMetaValue">${item.totalOperations}</strong>
-        </div>
-        <div>
-          <span class="zeusMetaLabel">Neto</span>
-          <strong class="zeusMetaValue">${formatCurrency(item.netAmount)}</strong>
-        </div>
-      </div>
-      <p class="zeusCardMeta">Último movimiento: ${escapeHtml(item.lastTransactionAtDisplay)}</p>
-    </article>
-  `;
 }
 
 function renderZeusView() {
@@ -1210,60 +1176,87 @@ function renderZeusView() {
     const message = state.providerErrors.zeus || "Esperando datos de Zeus.";
     elements.zeus.lastSync.textContent = "-";
     elements.zeus.syncNote.textContent = message;
-    elements.zeus.totalTransactions.textContent = "-";
-    elements.zeus.incomeAmount.textContent = "-";
-    elements.zeus.expenseAmount.textContent = "-";
-    elements.zeus.balanceAmount.textContent = "-";
-    elements.zeus.lastMovement.textContent = "-";
-    elements.zeus.transactionsCount.textContent = "0";
-    elements.zeus.topDaysCount.textContent = "0";
-    elements.zeus.activeFilterLabel.textContent = "Mostrando todos los movimientos del rango.";
-    renderList(elements.zeus.transactionsList, [], () => "", message);
-    renderList(elements.zeus.topDaysList, [], () => "", message);
+    elements.zeus.filteredUsers.textContent = "-";
+    elements.zeus.totalUsers.textContent = "-";
+    elements.zeus.totalLoads.textContent = "-";
+    elements.zeus.totalAmount.textContent = "-";
+    elements.zeus.lastSyncDuplicate.textContent = "-";
+    elements.zeus.countFive.textContent = "0";
+    elements.zeus.countTen.textContent = "0";
+    elements.zeus.countFifteen.textContent = "0";
+    elements.zeus.countWeek.textContent = "0";
+    elements.zeus.countMonth.textContent = "0";
+    elements.zeus.activeFilterLabel.textContent = "Mostrando todos los usuarios.";
+    renderList(elements.zeus.listFive, [], () => "", message);
+    renderList(elements.zeus.listTen, [], () => "", message);
+    renderList(elements.zeus.listFifteen, [], () => "", message);
+    renderList(elements.zeus.weekRanking, [], () => "", message);
+    renderList(elements.zeus.monthRanking, [], () => "", message);
     state.currentViews.zeus = null;
     return;
   }
 
-  const baseTransactions = applyZeusSearch(applyZeusBaseFilters(payload.analytics.transactions));
-  const topDaysSource = applyZeusSearch(
-    payload.analytics.topDays.filter((day) => {
-      if (state.zeusFilters.amount !== "all" && getAmountBucket(Math.abs(day.totalIncome)) !== state.zeusFilters.amount) {
-        return false;
-      }
-      return true;
-    })
+  const filteredUsers = applyZeusSearch(applyZeusFilters(payload.analytics.users));
+  const five = applyPanelControls(
+    filteredUsers.filter((user) => user.inactivityBucket === "five"),
+    "five",
+    "zeus"
   );
-  const transactions = applyPanelControls(baseTransactions, "transactions", "zeus");
-  const topDays = applyPanelControls(topDaysSource, "days", "zeus");
+  const ten = applyPanelControls(
+    filteredUsers.filter((user) => user.inactivityBucket === "ten"),
+    "ten",
+    "zeus"
+  );
+  const fifteen = applyPanelControls(
+    filteredUsers.filter((user) => user.inactivityBucket === "fifteen"),
+    "fifteen",
+    "zeus"
+  );
+  const weekRanking = applyZeusSearch(
+    applyPanelControls(payload.analytics.rankings.week, "week", "zeus")
+  );
+  const monthRanking = applyZeusSearch(
+    applyPanelControls(payload.analytics.rankings.month, "month", "zeus")
+  );
+  const filteredLoads = filteredUsers.reduce((sum, item) => sum + item.loadsCount, 0);
+  const filteredAmount = filteredUsers.reduce((sum, item) => sum + item.totalAmount, 0);
 
   elements.zeus.lastSync.textContent = formatClock(payload.meta.fetchedAt);
-  elements.zeus.syncNote.textContent = `${payload.meta.totalRows} movimientos cargados`;
-  elements.zeus.totalTransactions.textContent = String(payload.analytics.summary.totalTransactions);
-  elements.zeus.incomeAmount.textContent = formatCurrency(payload.analytics.summary.totalIncome);
-  elements.zeus.expenseAmount.textContent = formatCurrency(payload.analytics.summary.totalExpense);
-  elements.zeus.balanceAmount.textContent = formatCurrency(payload.analytics.summary.balanceArs);
-  elements.zeus.lastMovement.textContent = payload.analytics.summary.lastTransactionAtDisplay;
-  elements.zeus.transactionsCount.textContent = String(transactions.length);
-  elements.zeus.topDaysCount.textContent = String(topDays.length);
+  elements.zeus.syncNote.textContent = `${payload.meta.totalRows} transferencias de jugadores cargadas`;
+  elements.zeus.filteredUsers.textContent = String(filteredUsers.length);
+  elements.zeus.totalUsers.textContent = String(payload.analytics.summary.uniqueUsers);
+  elements.zeus.totalLoads.textContent = String(filteredLoads);
+  elements.zeus.totalAmount.textContent = formatCurrency(filteredAmount);
+  elements.zeus.lastSyncDuplicate.textContent = formatClock(payload.meta.fetchedAt);
+  elements.zeus.countFive.textContent = String(five.length);
+  elements.zeus.countTen.textContent = String(ten.length);
+  elements.zeus.countFifteen.textContent = String(fifteen.length);
+  elements.zeus.countWeek.textContent = String(weekRanking.length);
+  elements.zeus.countMonth.textContent = String(monthRanking.length);
 
   const searchNote = state.searchQuery ? ` Búsqueda: "${state.searchQuery}".` : "";
-  const operationLabel = {
-    all: "todas las operaciones",
-    income: "ingresos",
-    expense: "egresos",
-    other: "otros movimientos"
-  }[state.zeusFilters.operation];
-  const amountLabel = getZonaAmountLabel(state.zeusFilters.amount);
   elements.zeus.activeFilterLabel.textContent =
-    `Mostrando ${transactions.length} movimientos para ${operationLabel} y ${amountLabel}.${searchNote}`;
+    `Mostrando ${filteredUsers.length} de ${payload.analytics.summary.uniqueUsers} usuarios para ${getZonaPeriodLabel(state.zeusFilters.period)} y ${getZonaAmountLabel(state.zeusFilters.amount)}.${searchNote}`;
 
-  renderList(elements.zeus.transactionsList, transactions, renderZeusTransactionCard, "No hay movimientos para este filtro.");
-  renderList(elements.zeus.topDaysList, topDays, renderZeusDayCard, "No hay días para este filtro.");
+  renderList(elements.zeus.listFive, five, renderZonaUserCard, "No hay usuarios para este filtro.");
+  renderList(elements.zeus.listTen, ten, renderZonaUserCard, "No hay usuarios para este filtro.");
+  renderList(elements.zeus.listFifteen, fifteen, renderZonaUserCard, "No hay usuarios para este filtro.");
+  renderList(elements.zeus.weekRanking, weekRanking, renderZonaRankingItem, "No hay jugadores para este ranking.");
+  renderList(elements.zeus.monthRanking, monthRanking, renderZonaRankingItem, "No hay jugadores para este ranking.");
 
   state.currentViews.zeus = {
-    transactions,
-    topDays,
-    summary: payload.analytics.summary
+    filteredUsers,
+    five,
+    ten,
+    fifteen,
+    weekRanking,
+    monthRanking,
+    summary: {
+      filteredUsers: filteredUsers.length,
+      totalUsers: payload.analytics.summary.uniqueUsers,
+      filteredLoads,
+      filteredAmount
+    }
   };
 }
 
@@ -1294,14 +1287,15 @@ function renderOverviewSummaryCard(providerKey, payload, error) {
 
   return `
     <div class="providerSummaryGrid">
-      <div class="summaryMini"><span>Movimientos</span><strong>${payload.analytics.summary.totalTransactions}</strong></div>
-      <div class="summaryMini"><span>Ingresos</span><strong>${formatCurrency(payload.analytics.summary.totalIncome)}</strong></div>
-      <div class="summaryMini"><span>Balance ARS</span><strong>${formatCurrency(payload.analytics.summary.balanceArs)}</strong></div>
+      <div class="summaryMini"><span>Usuarios</span><strong>${payload.analytics.summary.uniqueUsers}</strong></div>
+      <div class="summaryMini"><span>Cargas</span><strong>${payload.analytics.summary.totalLoads}</strong></div>
+      <div class="summaryMini"><span>Monto</span><strong>${formatCurrency(payload.analytics.summary.totalAmount)}</strong></div>
       <div class="summaryMini"><span>Última sync</span><strong>${formatClock(payload.meta.fetchedAt)}</strong></div>
     </div>
     <div class="pillRow">
-      <span class="miniPill">Egresos: ${formatCurrency(payload.analytics.summary.totalExpense)}</span>
-      <span class="miniPill">Neto: ${formatCurrency(payload.analytics.summary.totalNet)}</span>
+      <span class="miniPill">5-9 días: ${payload.analytics.summary.inactiveFive}</span>
+      <span class="miniPill">10-14 días: ${payload.analytics.summary.inactiveTen}</span>
+      <span class="miniPill">15+ días: ${payload.analytics.summary.inactiveFifteen}</span>
     </div>
   `;
 }
@@ -1335,7 +1329,7 @@ function renderOverviewComparison() {
     cards.push(`
       <article class="comparisonCard">
         <strong>Zeus activo</strong>
-        <p>${zeus.analytics.summary.totalTransactions} movimientos y ${formatCurrency(zeus.analytics.summary.totalIncome)} en ingresos dentro del rango actual.</p>
+        <p>${zeus.analytics.summary.uniqueUsers} usuarios y ${formatCurrency(zeus.analytics.summary.totalAmount)} acumulados en el rango actual.</p>
       </article>
     `);
   }
@@ -1344,7 +1338,7 @@ function renderOverviewComparison() {
     cards.push(`
       <article class="comparisonCard">
         <strong>Lectura cruzada</strong>
-        <p>ZonaEpic está mostrando ${zona.analytics.summary.uniqueUsers} usuarios operados, mientras Zeus refleja un neto de ${formatCurrency(zeus.analytics.summary.totalNet)} en el panel madre.</p>
+        <p>ZonaEpic está mostrando ${zona.analytics.summary.uniqueUsers} usuarios operados, mientras Zeus muestra ${zeus.analytics.summary.uniqueUsers} usuarios con cargas en el mismo rango.</p>
       </article>
     `);
   }
@@ -1422,7 +1416,7 @@ function setActiveTab(tabKey) {
     },
     zeus: {
       kicker: "Zeus",
-      title: "Panel madre, ingresos y movimientos"
+      title: "Usuarios, cargas e inactividad"
     },
     settings: {
       kicker: "Settings",
@@ -1461,10 +1455,10 @@ function exportOverviewCsv() {
   lines.push([
     '"Zeus"',
     `"${zeus ? "ok" : state.providerErrors.zeus || "sin datos"}"`,
-    '"Movimientos"',
-    `"${zeus?.analytics?.summary?.totalTransactions ?? "-"}"`,
-    '"Ingresos"',
-    `"${zeus ? formatCurrency(zeus.analytics.summary.totalIncome) : "-"}"`
+    '"Usuarios"',
+    `"${zeus?.analytics?.summary?.uniqueUsers ?? "-"}"`,
+    '"Monto"',
+    `"${zeus ? formatCurrency(zeus.analytics.summary.totalAmount) : "-"}"`
   ].join(";"));
 
   downloadTextFile(`overview-panels-${todayIsoDate()}.csv`, `\uFEFF${lines.join("\n")}`, "text/csv;charset=utf-8");
@@ -1524,27 +1518,39 @@ function exportZeusCsv() {
   }
 
   const lines = [];
-  lines.push(['"Operacion"', '"Monto"', '"Balance despues"', '"Fecha"', '"Grupo"'].join(";"));
-  view.transactions.forEach((item) => {
-    lines.push([
-      `"${item.operation}"`,
-      `"${item.amount}"`,
-      `"${item.balanceAfter}"`,
-      `"${item.createdAtDisplay}"`,
-      `"${item.operationGroup}"`
-    ].join(";"));
+  lines.push(['"Seccion"', '"Usuario"', '"Promedio"', '"Cantidad cargas"', '"Ultima carga"', '"Dias inactivo"'].join(";"));
+
+  [
+    ["5 a 9 dias", view.five],
+    ["10 a 14 dias", view.ten],
+    ["15 dias o mas", view.fifteen]
+  ].forEach(([section, items]) => {
+    items.forEach((item) => {
+      lines.push([
+        `"${section}"`,
+        `"${item.username}"`,
+        `"${formatCurrency(item.averageAmount)}"`,
+        `"${item.loadsCount}"`,
+        `"${item.lastLoadAtDisplay}"`,
+        `"${item.daysSinceLastLoad}"`
+      ].join(";"));
+    });
   });
 
   lines.push("");
-  lines.push(['"Fecha"', '"Ingresos"', '"Egresos"', '"Neto"', '"Operaciones"'].join(";"));
-  view.topDays.forEach((item) => {
-    lines.push([
-      `"${item.dateDisplay}"`,
-      `"${item.totalIncome}"`,
-      `"${item.totalExpense}"`,
-      `"${item.netAmount}"`,
-      `"${item.totalOperations}"`
-    ].join(";"));
+  lines.push(['"Ranking"', '"Rank"', '"Usuario"', '"Monto"', '"Cantidad cargas"', '"Ultima carga"'].join(";"));
+
+  [["Semana", view.weekRanking], ["Mes", view.monthRanking]].forEach(([section, items]) => {
+    items.forEach((item) => {
+      lines.push([
+        `"${section}"`,
+        `"${item.rank}"`,
+        `"${item.username}"`,
+        `"${formatCurrency(item.totalAmount)}"`,
+        `"${item.loadsCount}"`,
+        `"${item.lastLoadAtDisplay}"`
+      ].join(";"));
+    });
   });
 
   downloadTextFile(`zeus-${todayIsoDate()}.csv`, `\uFEFF${lines.join("\n")}`, "text/csv;charset=utf-8");
@@ -1696,10 +1702,10 @@ function setupZonaFilters() {
 }
 
 function setupZeusFilters() {
-  elements.zeus.operationButtons.forEach((button) => {
+  elements.zeus.periodButtons.forEach((button) => {
     button.addEventListener("click", () => {
-      state.zeusFilters.operation = button.dataset.zeusOperation;
-      elements.zeus.operationButtons.forEach((item) =>
+      state.zeusFilters.period = button.dataset.zeusPeriod;
+      elements.zeus.periodButtons.forEach((item) =>
         item.classList.toggle("active", item === button)
       );
       renderZeusView();
@@ -1776,30 +1782,42 @@ function setupSearch() {
 
 function setupCopyHandlers() {
   document.body.addEventListener("click", async (event) => {
+    const usernameTrigger = event.target.closest("[data-copy-username]");
     const card = event.target.closest(".copyableCard");
-    if (!card) {
+
+    if (!usernameTrigger && !card) {
       return;
     }
 
-    const username = card.dataset.username;
+    const username = usernameTrigger?.dataset.copyUsername || card?.dataset.username;
     if (!username) {
       return;
     }
 
     try {
       await copyToClipboard(username);
-      elements.zona.statusPill.textContent = `Copiado: ${username}`;
-      card.classList.add("copied");
+      const sourceElement = usernameTrigger || card;
+      const providerKey = sourceElement.closest("#zeusView") ? "zeus" : "zonaEpic";
+      const targetStatus = providerKey === "zeus" ? elements.zeus.statusPill : elements.zona.statusPill;
+      targetStatus.textContent = `Copiado: ${username}`;
+      card?.classList.add("copied");
+      usernameTrigger?.classList.add("copied");
       window.setTimeout(() => {
-        card.classList.remove("copied");
-        if (elements.zona.statusPill.textContent === `Copiado: ${username}`) {
-          elements.zona.statusPill.textContent = state.syncing.zonaEpic
-            ? state.syncProgress.zonaEpic || "Sincronizando..."
-            : "ZonaEpic actualizado";
+        card?.classList.remove("copied");
+        usernameTrigger?.classList.remove("copied");
+        if (targetStatus.textContent === `Copiado: ${username}`) {
+          targetStatus.textContent = providerKey === "zeus"
+            ? state.syncing.zeus
+              ? state.syncProgress.zeus || "Sincronizando..."
+              : "Zeus actualizado"
+            : state.syncing.zonaEpic
+              ? state.syncProgress.zonaEpic || "Sincronizando..."
+              : "ZonaEpic actualizado";
         }
       }, 1200);
     } catch {
-      elements.zona.statusPill.textContent = "No se pudo copiar el usuario";
+      const targetStatus = card.closest("#zeusView") ? elements.zeus.statusPill : elements.zona.statusPill;
+      targetStatus.textContent = "No se pudo copiar el usuario";
     }
   });
 }
