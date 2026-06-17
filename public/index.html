@@ -342,7 +342,7 @@
             <section class="sectionTitle">
               <div>
                 <p class="sectionEyebrow">Zeus</p>
-                <h2>Movimientos del panel madre y resumen operativo</h2>
+                <h2>Usuarios, cargas e inactividad</h2>
               </div>
               <span id="zeusStatusPill" class="statusPill">Sincronización pendiente</span>
             </section>
@@ -384,35 +384,35 @@
 
             <section class="stats">
               <article class="card statCard statPrimary">
-                <span class="label">Movimientos</span>
-                <strong id="zeusTotalTransactions">-</strong>
+                <span class="label">Usuarios filtrados</span>
+                <strong id="zeusFilteredUsers">-</strong>
               </article>
               <article class="card statCard">
-                <span class="label">Ingresos</span>
-                <strong id="zeusIncomeAmount">-</strong>
+                <span class="label">Usuarios totales</span>
+                <strong id="zeusTotalUsers">-</strong>
               </article>
               <article class="card statCard statAccent">
-                <span class="label">Egresos</span>
-                <strong id="zeusExpenseAmount">-</strong>
+                <span class="label">Cargas filtradas</span>
+                <strong id="zeusTotalLoads">-</strong>
               </article>
               <article class="card statCard statGlow">
-                <span class="label">Balance actual</span>
-                <strong id="zeusBalanceAmount">-</strong>
+                <span class="label">Monto filtrado</span>
+                <strong id="zeusTotalAmount">-</strong>
               </article>
               <article class="card statCard statMono">
-                <span class="label">Último movimiento</span>
-                <strong id="zeusLastMovement" class="mono">-</strong>
+                <span class="label">Última sync</span>
+                <strong id="zeusLastSyncDuplicate" class="mono">-</strong>
               </article>
             </section>
 
             <section class="filtersPanel">
               <div class="filterGroup">
-                <span class="filterLabel">Operación</span>
+                <span class="filterLabel">Franja horaria</span>
                 <div class="segmented">
-                  <button class="segment active" data-zeus-operation="all">Todas</button>
-                  <button class="segment" data-zeus-operation="income">Ingresos</button>
-                  <button class="segment" data-zeus-operation="expense">Egresos</button>
-                  <button class="segment" data-zeus-operation="other">Otros</button>
+                  <button class="segment active" data-zeus-period="all">Todos</button>
+                  <button class="segment" data-zeus-period="morning">Mañana</button>
+                  <button class="segment" data-zeus-period="afternoon">Tarde</button>
+                  <button class="segment" data-zeus-period="night">Noche</button>
                 </div>
               </div>
 
@@ -429,47 +429,114 @@
 
             <section class="headline">
               <div>
-                <h2>Movimientos recientes</h2>
-                <p id="zeusActiveFilterLabel" class="headlineText">Mostrando todos los movimientos del rango.</p>
+                <h2>Listas de inactividad</h2>
+                <p id="zeusActiveFilterLabel" class="headlineText">Mostrando todos los usuarios.</p>
               </div>
-              <span class="statusPill">API REST</span>
+              <span class="statusPill">Monitor operativo</span>
             </section>
 
-            <section class="rankingsGrid zeusGrid">
+            <section class="inactivityGrid">
+              <article class="panel panel-warning">
+                <div class="panelAccent"></div>
+                <div class="panelHeader">
+                  <div>
+                    <p class="mini">Inactividad</p>
+                    <h3>5 a 9 días</h3>
+                  </div>
+                  <strong id="zeusCountFive">0</strong>
+                </div>
+                <div class="panelTools panelToolsGrid" data-zeus-panel="five">
+                  <label><span>Filtrar por</span><select data-role="filter-field"><option value="amount">Monto</option><option value="loads">Cargas</option><option value="date">Fecha</option></select></label>
+                  <label><span>Regla</span><select data-role="filter-operator"><option value="all">Todos</option><option value="gte">Mayor o igual</option><option value="lte">Menor o igual</option></select></label>
+                  <label><span>Valor</span><input data-role="filter-value" type="text" placeholder="3000 o 2026-06-10" /></label>
+                  <label><span>Ordenar por</span><select data-role="sort-field"><option value="date">Fecha</option><option value="amount">Monto</option><option value="loads">Cargas</option></select></label>
+                  <label><span>Dirección</span><select data-role="sort-direction"><option value="desc">Desc</option><option value="asc">Asc</option></select></label>
+                </div>
+                <div id="zeusListFive" class="userList"></div>
+              </article>
+
+              <article class="panel panel-warning panel-warning-secondary">
+                <div class="panelAccent"></div>
+                <div class="panelHeader">
+                  <div>
+                    <p class="mini">Inactividad</p>
+                    <h3>10 a 14 días</h3>
+                  </div>
+                  <strong id="zeusCountTen">0</strong>
+                </div>
+                <div class="panelTools panelToolsGrid" data-zeus-panel="ten">
+                  <label><span>Filtrar por</span><select data-role="filter-field"><option value="amount">Monto</option><option value="loads">Cargas</option><option value="date">Fecha</option></select></label>
+                  <label><span>Regla</span><select data-role="filter-operator"><option value="all">Todos</option><option value="gte">Mayor o igual</option><option value="lte">Menor o igual</option></select></label>
+                  <label><span>Valor</span><input data-role="filter-value" type="text" placeholder="3000 o 2026-06-10" /></label>
+                  <label><span>Ordenar por</span><select data-role="sort-field"><option value="date">Fecha</option><option value="amount">Monto</option><option value="loads">Cargas</option></select></label>
+                  <label><span>Dirección</span><select data-role="sort-direction"><option value="desc">Desc</option><option value="asc">Asc</option></select></label>
+                </div>
+                <div id="zeusListTen" class="userList"></div>
+              </article>
+
+              <article class="panel panel-warning panel-warning-tertiary">
+                <div class="panelAccent"></div>
+                <div class="panelHeader">
+                  <div>
+                    <p class="mini">Inactividad</p>
+                    <h3>15 días o más</h3>
+                  </div>
+                  <strong id="zeusCountFifteen">0</strong>
+                </div>
+                <div class="panelTools panelToolsGrid" data-zeus-panel="fifteen">
+                  <label><span>Filtrar por</span><select data-role="filter-field"><option value="amount">Monto</option><option value="loads">Cargas</option><option value="date">Fecha</option></select></label>
+                  <label><span>Regla</span><select data-role="filter-operator"><option value="all">Todos</option><option value="gte">Mayor o igual</option><option value="lte">Menor o igual</option></select></label>
+                  <label><span>Valor</span><input data-role="filter-value" type="text" placeholder="3000 o 2026-06-10" /></label>
+                  <label><span>Ordenar por</span><select data-role="sort-field"><option value="date">Fecha</option><option value="amount">Monto</option><option value="loads">Cargas</option></select></label>
+                  <label><span>Dirección</span><select data-role="sort-direction"><option value="desc">Desc</option><option value="asc">Asc</option></select></label>
+                </div>
+                <div id="zeusListFifteen" class="userList"></div>
+              </article>
+            </section>
+
+            <section class="headline">
+              <div>
+                <h2>Ranking de jugadores</h2>
+                <p class="headlineText">Top 100 por volumen de cargas dentro del rango.</p>
+              </div>
+              <span class="statusPill">Comparativa</span>
+            </section>
+
+            <section class="rankingsGrid">
               <article class="panel panel-ranking">
                 <div class="panelHeader">
                   <div>
-                    <p class="mini">Listado</p>
-                    <h3>Transacciones</h3>
+                    <p class="mini">Top 100</p>
+                    <h3>Últimos 7 días</h3>
                   </div>
-                  <strong id="zeusTransactionsCount">0</strong>
+                  <strong id="zeusCountWeek">0</strong>
                 </div>
-                <div class="panelTools panelToolsGrid" data-zeus-panel="transactions">
-                  <label><span>Filtrar por</span><select data-role="filter-field"><option value="amount">Monto</option><option value="date">Fecha</option><option value="loads">Cantidad</option></select></label>
+                <div class="panelTools panelToolsGrid" data-zeus-panel="week">
+                  <label><span>Filtrar por</span><select data-role="filter-field"><option value="amount">Monto</option><option value="loads">Cargas</option><option value="date">Fecha</option></select></label>
                   <label><span>Regla</span><select data-role="filter-operator"><option value="all">Todos</option><option value="gte">Mayor o igual</option><option value="lte">Menor o igual</option></select></label>
                   <label><span>Valor</span><input data-role="filter-value" type="text" placeholder="3000 o 2026-06-10" /></label>
-                  <label><span>Ordenar por</span><select data-role="sort-field"><option value="date">Fecha</option><option value="amount">Monto</option></select></label>
+                  <label><span>Ordenar por</span><select data-role="sort-field"><option value="amount">Monto</option><option value="loads">Cargas</option><option value="date">Fecha</option></select></label>
                   <label><span>Dirección</span><select data-role="sort-direction"><option value="desc">Desc</option><option value="asc">Asc</option></select></label>
                 </div>
-                <div id="zeusTransactionsList" class="rankingList"></div>
+                <div id="zeusWeekRanking" class="rankingList"></div>
               </article>
 
               <article class="panel panel-ranking panel-ranking-secondary">
                 <div class="panelHeader">
                   <div>
-                    <p class="mini">Ranking</p>
-                    <h3>Días con más ingresos</h3>
+                    <p class="mini">Top 100</p>
+                    <h3>Últimos 30 días</h3>
                   </div>
-                  <strong id="zeusTopDaysCount">0</strong>
+                  <strong id="zeusCountMonth">0</strong>
                 </div>
-                <div class="panelTools panelToolsGrid" data-zeus-panel="days">
-                  <label><span>Filtrar por</span><select data-role="filter-field"><option value="amount">Monto</option><option value="loads">Cantidad</option><option value="date">Fecha</option></select></label>
+                <div class="panelTools panelToolsGrid" data-zeus-panel="month">
+                  <label><span>Filtrar por</span><select data-role="filter-field"><option value="amount">Monto</option><option value="loads">Cargas</option><option value="date">Fecha</option></select></label>
                   <label><span>Regla</span><select data-role="filter-operator"><option value="all">Todos</option><option value="gte">Mayor o igual</option><option value="lte">Menor o igual</option></select></label>
                   <label><span>Valor</span><input data-role="filter-value" type="text" placeholder="3000 o 2026-06-10" /></label>
-                  <label><span>Ordenar por</span><select data-role="sort-field"><option value="amount">Monto</option><option value="loads">Cantidad</option><option value="date">Fecha</option></select></label>
+                  <label><span>Ordenar por</span><select data-role="sort-field"><option value="amount">Monto</option><option value="loads">Cargas</option><option value="date">Fecha</option></select></label>
                   <label><span>Dirección</span><select data-role="sort-direction"><option value="desc">Desc</option><option value="asc">Asc</option></select></label>
                 </div>
-                <div id="zeusTopDaysList" class="rankingList"></div>
+                <div id="zeusMonthRanking" class="rankingList"></div>
               </article>
             </section>
           </section>
