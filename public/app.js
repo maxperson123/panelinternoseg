@@ -140,6 +140,10 @@ const state = {
     zonaEpic: false,
     zeus: false
   },
+  syncProgress: {
+    zonaEpic: "",
+    zeus: ""
+  },
   zonaFilters: {
     period: "all",
     amount: "all"
@@ -732,7 +736,12 @@ async function syncZonaBrowserCache(runtimeConfig) {
 
   while (current <= finalDay) {
     steps += 1;
-    setProviderStatus("zonaEpic", mode === "full_import" ? `Importando ${steps}/${totalDays}...` : `Actualizando ${steps}/${totalDays}...`);
+    setProviderProgress(
+      "zonaEpic",
+      mode === "full_import"
+        ? `Importando ${steps}/${totalDays}...`
+        : `Actualizando ${steps}/${totalDays}...`
+    );
 
     try {
       const payload = await fetchZonaWindow(runtimeConfig, current, current);
@@ -789,11 +798,17 @@ async function syncZonaBrowserCache(runtimeConfig) {
 }
 
 function setProviderStatus(providerKey, text) {
+  state.syncProgress[providerKey] = text;
   if (providerKey === "zonaEpic") {
     elements.zona.statusPill.textContent = text;
   } else {
     elements.zeus.statusPill.textContent = text;
   }
+}
+
+function setProviderProgress(providerKey, text) {
+  state.syncProgress[providerKey] = text;
+  setProviderStatus(providerKey, text);
 }
 
 function isZonaConfigured() {
@@ -807,6 +822,10 @@ function isZeusConfigured() {
 }
 
 async function syncZonaEpic() {
+  if (state.syncing.zonaEpic) {
+    return;
+  }
+
   if (!isZonaConfigured()) {
     state.providerErrors.zonaEpic = "Faltan credenciales de ZonaEpic en Settings.";
     state.providerData.zonaEpic = null;
@@ -815,6 +834,7 @@ async function syncZonaEpic() {
   }
 
   state.syncing.zonaEpic = true;
+  state.syncProgress.zonaEpic = "Preparando sincronización...";
   state.providerErrors.zonaEpic = "";
   renderAll();
 
@@ -839,11 +859,16 @@ async function syncZonaEpic() {
     state.providerData.zonaEpic = null;
   } finally {
     state.syncing.zonaEpic = false;
+    state.syncProgress.zonaEpic = "";
     renderAll();
   }
 }
 
 async function syncZeus() {
+  if (state.syncing.zeus) {
+    return;
+  }
+
   if (!isZeusConfigured()) {
     state.providerErrors.zeus = "Faltan credenciales de Zeus en Settings.";
     state.providerData.zeus = null;
@@ -852,6 +877,7 @@ async function syncZeus() {
   }
 
   state.syncing.zeus = true;
+  state.syncProgress.zeus = "Sincronizando Zeus...";
   state.providerErrors.zeus = "";
   renderAll();
 
@@ -882,6 +908,7 @@ async function syncZeus() {
     state.providerData.zeus = null;
   } finally {
     state.syncing.zeus = false;
+    state.syncProgress.zeus = "";
     renderAll();
   }
 }
@@ -967,7 +994,7 @@ function renderZonaView() {
   elements.zona.interval.value = String(state.config.zonaEpic.interval);
 
   if (state.syncing.zonaEpic) {
-    elements.zona.statusPill.textContent = "Sincronizando...";
+    elements.zona.statusPill.textContent = state.syncProgress.zonaEpic || "Sincronizando...";
   } else if (state.providerErrors.zonaEpic) {
     elements.zona.statusPill.textContent = state.providerErrors.zonaEpic;
   } else if (payload) {
@@ -1170,7 +1197,7 @@ function renderZeusView() {
   elements.zeus.interval.value = String(state.config.zeus.interval);
 
   if (state.syncing.zeus) {
-    elements.zeus.statusPill.textContent = "Sincronizando...";
+    elements.zeus.statusPill.textContent = state.syncProgress.zeus || "Sincronizando...";
   } else if (state.providerErrors.zeus) {
     elements.zeus.statusPill.textContent = state.providerErrors.zeus;
   } else if (payload) {
@@ -1766,7 +1793,9 @@ function setupCopyHandlers() {
       window.setTimeout(() => {
         card.classList.remove("copied");
         if (elements.zona.statusPill.textContent === `Copiado: ${username}`) {
-          elements.zona.statusPill.textContent = "ZonaEpic actualizado";
+          elements.zona.statusPill.textContent = state.syncing.zonaEpic
+            ? state.syncProgress.zonaEpic || "Sincronizando..."
+            : "ZonaEpic actualizado";
         }
       }, 1200);
     } catch {
