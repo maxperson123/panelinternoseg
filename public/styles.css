@@ -766,6 +766,25 @@ a {
   cursor: pointer;
 }
 
+.copyUsernameButton {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+  transition: color 140ms ease, opacity 140ms ease;
+}
+
+.copyUsernameButton:hover,
+.copyUsernameButton.copied {
+  color: #8ed5ff;
+}
+
 .copyableCard:hover,
 .copyableCard.copied,
 .zeusTransactionCard:hover,
@@ -787,6 +806,10 @@ a {
 .userCard header strong,
 .rankingTop strong,
 .zeusCardTop strong {
+  font-size: 1.05rem;
+}
+
+.copyUsernameButton {
   font-size: 1.05rem;
 }
 
