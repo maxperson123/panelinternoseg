@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { createServer } from "node:http";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,6 +9,7 @@ const timeZone = "America/Argentina/Buenos_Aires";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
+const contactsDir = path.join(__dirname, "data", "contacts");
 const cacheDir = path.join(__dirname, ".cache");
 const cacheFile = path.join(cacheDir, "panel-cache.json");
 const cacheSchemaVersion = 2;
@@ -419,6 +420,143 @@ function normalizeDecimal(value) {
 
   const parsed = Number(String(value || "").replace(/,/g, ""));
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizeContactSearchText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function decodeQuotedPrintable(value) {
+  const cleaned = String(value || "")
+    .replace(/=(\r?\n)/g, "")
+    .replace(/=([0-9A-F]{2})/gi, (_, hex) => String.fromCharCode(Number.parseInt(hex, 16)));
+
+  return Buffer.from(cleaned, "latin1").toString("utf8").trim();
+}
+
+function parseVCardEntries(rawContent) {
+  const cards = String(rawContent || "")
+    .replace(/\r\n/g, "\n")
+    .split("BEGIN:VCARD")
+    .map((chunk) => chunk.trim())
+    .filter(Boolean);
+
+  return cards.map((card) => {
+    const logicalLines = [];
+
+    for (const line of card.split("\n")) {
+      if (!line) {
+        continue;
+      }
+
+      if (!logicalLines.length) {
+        logicalLines.push(line);
+        continue;
+      }
+
+      if (/^[ \t]/.test(line) || logicalLines[logicalLines.length - 1].endsWith("=")) {
+        logicalLines[logicalLines.length - 1] += line.trimStart();
+        continue;
+      }
+
+      logicalLines.push(line);
+    }
+
+    const entry = { fn: "", tels: [] };
+
+    for (const line of logicalLines) {
+      const separatorIndex = line.indexOf(":");
+      if (separatorIndex === -1) {
+        continue;
+      }
+
+      const meta = line.slice(0, separatorIndex);
+      const rawValue = line.slice(separatorIndex + 1);
+      const key = meta.split(";")[0].toUpperCase();
+      const value = /QUOTED-PRINTABLE/i.test(meta)
+        ? decodeQuotedPrintable(rawValue)
+        : rawValue.trim();
+
+      if (key === "FN" && value) {
+        entry.fn = value;
+      }
+
+      if (key === "TEL" && value) {
+        entry.tels.push(value);
+      }
+    }
+
+    return entry;
+  });
+}
+
+async function loadContactsDirectory() {
+  try {
+    const officeEntries = await readdir(contactsDir, { withFileTypes: true });
+    const offices = {};
+
+    for (const officeEntry of officeEntries) {
+      if (!officeEntry.isDirectory()) {
+        continue;
+      }
+
+      const officeKey = normalizeContactSearchText(officeEntry.name);
+      const officePath = path.join(contactsDir, officeEntry.name);
+      const fileEntries = await readdir(officePath, { withFileTypes: true });
+      const entries = [];
+
+      for (const fileEntry of fileEntries) {
+        if (!fileEntry.isFile() || path.extname(fileEntry.name).toLowerCase() !== ".vcf") {
+          continue;
+        }
+
+        const fileLabel = path.basename(fileEntry.name, path.extname(fileEntry.name));
+        const rawContent = await readFile(path.join(officePath, fileEntry.name), "utf8");
+        const cards = parseVCardEntries(rawContent);
+
+        for (const card of cards) {
+          const searchText = normalizeContactSearchText(card.fn);
+          if (!searchText) {
+            continue;
+          }
+
+          entries.push({
+            phoneLabel: fileLabel,
+            displayName: card.fn,
+            phoneNumbers: card.tels,
+            searchText
+          });
+        }
+      }
+
+      offices[officeKey] = {
+        officeKey,
+        officeLabel: officeEntry.name,
+        entries
+      };
+    }
+
+    return { offices };
+  } catch {
+    return { offices: {} };
+  }
+}
+
+function buildPublicContactsDirectory(contactsDirectory) {
+  const offices = Object.values(contactsDirectory?.offices || {}).map((office) => ({
+    officeKey: office.officeKey,
+    officeLabel: office.officeLabel,
+    entries: office.entries.map((entry) => ({
+      phoneLabel: entry.phoneLabel,
+      searchText: entry.searchText
+    }))
+  }));
+
+  return { offices };
 }
 
 async function fetchBalancesPage({
@@ -1013,7 +1151,43 @@ function getZeusTransferPlayer(item) {
   return null;
 }
 
-function buildZeusTopRanking(loads, days) {
+function getZeusTransferOffice(item) {
+  if (String(item?.toUserRole || "").toLowerCase() === "player") {
+    return String(item.fromUsername || item.creatorUsername || "").trim();
+  }
+
+  if (String(item?.fromUserRole || "").toLowerCase() === "player") {
+    return String(item.toUsername || item.creatorUsername || "").trim();
+  }
+
+  return String(item.creatorUsername || "").trim();
+}
+
+function getBestOfficeLabel(officeCounts) {
+  return Object.entries(officeCounts || {}).sort((left, right) => right[1] - left[1])[0]?.[0] || "";
+}
+
+function getMatchedPhoneLabels(contactsDirectory, officeLabel, username) {
+  const officeKey = normalizeContactSearchText(officeLabel);
+  const usernameKey = normalizeContactSearchText(username);
+  const office = contactsDirectory?.offices?.[officeKey];
+
+  if (!office || !usernameKey || usernameKey.length < 4) {
+    return [];
+  }
+
+  const labels = new Set();
+
+  for (const entry of office.entries) {
+    if (entry.searchText.includes(usernameKey)) {
+      labels.add(entry.phoneLabel);
+    }
+  }
+
+  return Array.from(labels).sort((left, right) => left.localeCompare(right));
+}
+
+function buildZeusTopRanking(loads, days, userLookup) {
   const now = new Date();
   const cutoff = new Date(now);
   cutoff.setDate(cutoff.getDate() - days);
@@ -1028,11 +1202,15 @@ function buildZeusTopRanking(loads, days) {
       username: item.username,
       totalAmount: 0,
       loadsCount: 0,
-      lastLoadAt: item.createdAtDate
+      lastLoadAt: item.createdAtDate,
+      officeCounts: {}
     };
 
     current.totalAmount += item.amount;
     current.loadsCount += 1;
+    if (item.officeLabel) {
+      current.officeCounts[item.officeLabel] = (current.officeCounts[item.officeLabel] || 0) + 1;
+    }
 
     if (item.createdAtDate > current.lastLoadAt) {
       current.lastLoadAt = item.createdAtDate;
@@ -1051,6 +1229,7 @@ function buildZeusTopRanking(loads, days) {
     })
     .slice(0, 100)
     .map((user, index) => ({
+      ...(userLookup.get(user.username) || {}),
       rank: index + 1,
       username: user.username,
       totalAmount: user.totalAmount,
@@ -1058,11 +1237,13 @@ function buildZeusTopRanking(loads, days) {
       lastLoadAtDisplay: formatDateTime(user.lastLoadAt),
       metricAmount: user.totalAmount,
       metricLoads: user.loadsCount,
-      metricDate: user.lastLoadAt.getTime()
+      metricDate: user.lastLoadAt.getTime(),
+      officeLabel: (userLookup.get(user.username) || {}).officeLabel || getBestOfficeLabel(user.officeCounts),
+      phoneLabels: (userLookup.get(user.username) || {}).phoneLabels || []
     }));
 }
 
-function buildZeusAnalytics(transfers) {
+function buildZeusAnalytics(transfers, contactsDirectory) {
   const usersMap = new Map();
   const now = new Date();
   const normalizedTransfers = transfers
@@ -1072,6 +1253,7 @@ function buildZeusAnalytics(transfers) {
       const createdAtDate = new Date(item.createdAt);
       const amount = normalizeDecimal(item.amount);
       const operation = String(item.operation || "UNKNOWN").toUpperCase();
+      const officeLabel = getZeusTransferOffice(item);
 
       return {
         id: item.id,
@@ -1079,6 +1261,7 @@ function buildZeusAnalytics(transfers) {
         userId: player?.userId || null,
         amount,
         operation,
+        officeLabel,
         createdAt: item.createdAt,
         createdAtDate,
         createdAtDisplay: formatDateTime(createdAtDate),
@@ -1107,12 +1290,16 @@ function buildZeusAnalytics(transfers) {
       totalAmount: 0,
       loadsCount: 0,
       lastLoadDate: item.createdAtDate,
-      periodCounts: { morning: 0, afternoon: 0, night: 0 }
+      periodCounts: { morning: 0, afternoon: 0, night: 0 },
+      officeCounts: {}
     };
 
     current.totalAmount += item.amount;
     current.loadsCount += 1;
     current.periodCounts[period] += 1;
+    if (item.officeLabel) {
+      current.officeCounts[item.officeLabel] = (current.officeCounts[item.officeLabel] || 0) + 1;
+    }
 
     if (item.createdAtDate >= current.lastLoadDate) {
       current.lastLoadDate = item.createdAtDate;
@@ -1130,6 +1317,8 @@ function buildZeusAnalytics(transfers) {
       const daysSinceLastLoad = Math.floor((now.getTime() - user.lastLoadDate.getTime()) / 86400000);
       const inactivityBucket =
         daysSinceLastLoad >= 15 ? "fifteen" : daysSinceLastLoad >= 10 ? "ten" : daysSinceLastLoad >= 5 ? "five" : null;
+      const officeLabel = getBestOfficeLabel(user.officeCounts);
+      const phoneLabels = getMatchedPhoneLabels(contactsDirectory, officeLabel, user.username);
 
       return {
         username: user.username,
@@ -1142,12 +1331,31 @@ function buildZeusAnalytics(transfers) {
         preferredAmountBucket: averageAmount >= 30000 ? "large" : averageAmount >= 10000 ? "medium" : averageAmount >= 3000 ? "small" : "other",
         daysSinceLastLoad,
         inactivityBucket,
+        officeLabel,
+        officeKey: normalizeContactSearchText(officeLabel),
+        phoneLabels,
         metricAmount: averageAmount,
         metricLoads: user.loadsCount,
         metricDate: user.lastLoadDate.getTime()
       };
     })
     .sort((left, right) => right.daysSinceLastLoad - left.daysSinceLastLoad);
+
+  const userLookup = new Map(users.map((user) => [user.username, user]));
+  const officeSummary = Array.from(
+    users.reduce((accumulator, user) => {
+      if (!user.officeLabel) {
+        return accumulator;
+      }
+
+      accumulator.set(user.officeKey, {
+        key: user.officeKey,
+        label: user.officeLabel,
+        count: (accumulator.get(user.officeKey)?.count || 0) + 1
+      });
+      return accumulator;
+    }, new Map()).values()
+  ).sort((left, right) => right.count - left.count);
 
   return {
     summary: {
@@ -1159,9 +1367,10 @@ function buildZeusAnalytics(transfers) {
       inactiveFifteen: users.filter((user) => user.inactivityBucket === "fifteen").length
     },
     rankings: {
-      week: buildZeusTopRanking(loadTransfers, 7),
-      month: buildZeusTopRanking(loadTransfers, 30)
+      week: buildZeusTopRanking(loadTransfers, 7, userLookup),
+      month: buildZeusTopRanking(loadTransfers, 30, userLookup)
     },
+    offices: officeSummary,
     users
   };
 }
@@ -1171,7 +1380,9 @@ function sendJson(response, statusCode, payload) {
   response.end(JSON.stringify(payload));
 }
 
-function handleApiConfig(response) {
+async function handleApiConfig(response) {
+  const contactsDirectory = await loadContactsDirectory();
+
   sendJson(response, 200, {
     providers: {
       zonaEpic: {
@@ -1185,7 +1396,8 @@ function handleApiConfig(response) {
         username: process.env.ZEUS_USERNAME || "",
         password: process.env.ZEUS_PASSWORD || ""
       }
-    }
+    },
+    contactsDirectory: buildPublicContactsDirectory(contactsDirectory)
   });
 }
 
@@ -1354,7 +1566,8 @@ async function handleApiZeusSnapshot(requestUrl, response) {
       throw new Error("No pude obtener el agentUserId de Zeus.");
     }
 
-    const [transfersPayload, statsPayload] = await Promise.all([
+    const [contactsDirectory, transfersPayload, statsPayload] = await Promise.all([
+      loadContactsDirectory(),
       fetchAllZeusPlayerTransfers({
         config,
         accessToken: auth.accessToken,
@@ -1369,7 +1582,7 @@ async function handleApiZeusSnapshot(requestUrl, response) {
         "operations[]": ["INCOME", "OUTCOME"]
       }).catch(() => null)
     ]);
-    const analytics = buildZeusAnalytics(transfersPayload.rows);
+    const analytics = buildZeusAnalytics(transfersPayload.rows, contactsDirectory);
 
     sendJson(response, 200, {
       meta: {
@@ -1475,7 +1688,7 @@ export async function handleRequest(request, response) {
   }
 
   if (requestUrl.pathname === "/api/config") {
-    handleApiConfig(response);
+    await handleApiConfig(response);
     return;
   }
 
