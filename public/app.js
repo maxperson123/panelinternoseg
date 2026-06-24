@@ -38,6 +38,7 @@ const elements = {
     totalAmount: document.querySelector("#zonaTotalAmount"),
     lastSyncDuplicate: document.querySelector("#zonaLastSyncDuplicate"),
     activeFilterLabel: document.querySelector("#zonaActiveFilterLabel"),
+    officeFilter: document.querySelector("#zonaOfficeFilter"),
     countFive: document.querySelector("#zonaCountFive"),
     countTen: document.querySelector("#zonaCountTen"),
     countFifteen: document.querySelector("#zonaCountFifteen"),
@@ -67,6 +68,7 @@ const elements = {
     totalAmount: document.querySelector("#zeusTotalAmount"),
     lastSyncDuplicate: document.querySelector("#zeusLastSyncDuplicate"),
     activeFilterLabel: document.querySelector("#zeusActiveFilterLabel"),
+    officeFilter: document.querySelector("#zeusOfficeFilter"),
     countFive: document.querySelector("#zeusCountFive"),
     countTen: document.querySelector("#zeusCountTen"),
     countFifteen: document.querySelector("#zeusCountFifteen"),
@@ -98,6 +100,9 @@ const state = {
   activeTab: "overview",
   searchQuery: "",
   defaults: {
+    contactsDirectory: {
+      offices: []
+    },
     providers: {
       zonaEpic: {
         baseUrl: "https://admin.zonaepic.vip",
@@ -151,10 +156,12 @@ const state = {
     zeus: ""
   },
   zonaFilters: {
+    office: "all",
     period: "all",
     amount: "all"
   },
   zeusFilters: {
+    office: "all",
     period: "all",
     amount: "all"
   },
@@ -564,6 +571,46 @@ function getInactivityBucket(daysSinceLastLoad) {
   return null;
 }
 
+function normalizeContactSearchText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function getMatchedContactsForUsername(username) {
+  const normalizedUsername = normalizeContactSearchText(username);
+  if (!normalizedUsername || normalizedUsername.length < 4) {
+    return { officeLabel: "", officeKey: "", phoneLabels: [] };
+  }
+
+  const matches = (state.defaults.contactsDirectory?.offices || [])
+    .map((office) => {
+      const phoneLabels = Array.from(
+        new Set(
+          (office.entries || [])
+            .filter((entry) => String(entry.searchText || "").includes(normalizedUsername))
+            .map((entry) => entry.phoneLabel)
+        )
+      );
+
+      return {
+        officeLabel: office.officeLabel,
+        officeKey: office.officeKey,
+        phoneLabels
+      };
+    })
+    .filter((office) => office.phoneLabels.length);
+
+  if (!matches.length) {
+    return { officeLabel: "", officeKey: "", phoneLabels: [] };
+  }
+
+  const bestMatch = matches.sort((left, right) => right.phoneLabels.length - left.phoneLabels.length)[0];
+  return bestMatch;
+}
+
 function buildZonaTopRanking(rows, days) {
   const now = new Date();
   const cutoff = new Date(now);
@@ -604,16 +651,23 @@ function buildZonaTopRanking(rows, days) {
       return right.loadsCount - left.loadsCount;
     })
     .slice(0, 100)
-    .map((user, index) => ({
-      rank: index + 1,
-      username: user.username,
-      totalAmount: user.totalAmount,
-      loadsCount: user.loadsCount,
-      lastLoadAtDisplay: formatDateTime(user.lastLoadAt),
-      metricAmount: user.totalAmount,
-      metricLoads: user.loadsCount,
-      metricDate: user.lastLoadAt.getTime()
-    }));
+    .map((user, index) => {
+      const contactsMatch = getMatchedContactsForUsername(user.username);
+
+      return {
+        rank: index + 1,
+        username: user.username,
+        totalAmount: user.totalAmount,
+        loadsCount: user.loadsCount,
+        lastLoadAtDisplay: formatDateTime(user.lastLoadAt),
+        officeLabel: contactsMatch.officeLabel,
+        officeKey: contactsMatch.officeKey,
+        phoneLabels: contactsMatch.phoneLabels,
+        metricAmount: user.totalAmount,
+        metricLoads: user.loadsCount,
+        metricDate: user.lastLoadAt.getTime()
+      };
+    });
 }
 
 function buildZonaAnalytics(rows) {
@@ -658,6 +712,7 @@ function buildZonaAnalytics(rows) {
     }, "morning");
     const averageAmount = user.loadsCount ? user.totalAmount / user.loadsCount : 0;
     const daysSinceLastLoad = daysBetween(user.lastLoadDate, now);
+    const contactsMatch = getMatchedContactsForUsername(user.username);
 
     return {
       username: user.username,
@@ -670,11 +725,29 @@ function buildZonaAnalytics(rows) {
       preferredAmountBucket: getAmountBucket(averageAmount),
       daysSinceLastLoad,
       inactivityBucket: getInactivityBucket(daysSinceLastLoad),
+      officeLabel: contactsMatch.officeLabel,
+      officeKey: contactsMatch.officeKey,
+      phoneLabels: contactsMatch.phoneLabels,
       metricAmount: averageAmount,
       metricLoads: user.loadsCount,
       metricDate: user.lastLoadDate.getTime()
     };
   });
+
+  const offices = Array.from(
+    users.reduce((accumulator, user) => {
+      if (!user.officeKey) {
+        return accumulator;
+      }
+
+      accumulator.set(user.officeKey, {
+        key: user.officeKey,
+        label: user.officeLabel,
+        count: (accumulator.get(user.officeKey)?.count || 0) + 1
+      });
+      return accumulator;
+    }, new Map()).values()
+  ).sort((left, right) => right.count - left.count);
 
   return {
     summary: {
@@ -689,6 +762,7 @@ function buildZonaAnalytics(rows) {
       week: buildZonaTopRanking(loadRows, 7),
       month: buildZonaTopRanking(loadRows, 30)
     },
+    offices,
     users: users.sort((left, right) => right.daysSinceLastLoad - left.daysSinceLastLoad)
   };
 }
@@ -941,16 +1015,25 @@ function applyZonaSearch(items) {
 
 function applyZonaFilters(users) {
   return users.filter((user) => {
+    const byOffice =
+      state.zonaFilters.office === "all" || user.officeKey === state.zonaFilters.office;
     const byPeriod =
       state.zonaFilters.period === "all" || user.preferredPeriod === state.zonaFilters.period;
     const byAmount =
       state.zonaFilters.amount === "all" ||
       user.preferredAmountBucket === state.zonaFilters.amount;
-    return byPeriod && byAmount;
+    return byOffice && byPeriod && byAmount;
   });
 }
 
 function renderZonaUserCard(user) {
+  const ownershipMeta = [
+    user.officeLabel ? `Oficina: ${escapeHtml(user.officeLabel)}` : "",
+    user.phoneLabels?.length ? `Teléfonos: ${escapeHtml(user.phoneLabels.join(", "))}` : ""
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   return `
     <article class="userCard copyableCard" data-username="${escapeHtml(user.username)}">
       <header>
@@ -970,11 +1053,19 @@ function renderZonaUserCard(user) {
         </div>
       </dl>
       <p class="meta">Última carga: ${escapeHtml(user.lastLoadAtDisplay)} · ${user.daysSinceLastLoad} días inactivo</p>
+      ${ownershipMeta ? `<p class="meta">${ownershipMeta}</p>` : ""}
     </article>
   `;
 }
 
 function renderZonaRankingItem(item) {
+  const ownershipMeta = [
+    item.officeLabel ? `Oficina: ${escapeHtml(item.officeLabel)}` : "",
+    item.phoneLabels?.length ? `Teléfonos: ${escapeHtml(item.phoneLabels.join(", "))}` : ""
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   return `
     <article class="rankingItem copyableCard" data-username="${escapeHtml(item.username)}">
       <div class="rankingTop">
@@ -987,6 +1078,7 @@ function renderZonaRankingItem(item) {
         <span>${item.loadsCount} cargas</span>
         <span>${escapeHtml(item.lastLoadAtDisplay)}</span>
       </div>
+      ${ownershipMeta ? `<p class="meta">${ownershipMeta}</p>` : ""}
     </article>
   `;
 }
@@ -1005,6 +1097,7 @@ function renderZonaView() {
   elements.zona.filterFrom.value = state.config.zonaEpic.filterFrom;
   elements.zona.filterTo.value = state.config.zonaEpic.filterTo;
   elements.zona.interval.value = String(state.config.zonaEpic.interval);
+  syncOfficeFilterOptions(elements.zona.officeFilter, payload?.analytics?.offices, state.zonaFilters.office);
 
   if (state.syncing.zonaEpic) {
     elements.zona.statusPill.textContent = state.syncProgress.zonaEpic || "Sincronizando...";
@@ -1083,8 +1176,12 @@ function renderZonaView() {
   elements.zona.countMonth.textContent = String(monthRanking.length);
 
   const searchNote = state.searchQuery ? ` Búsqueda: "${state.searchQuery}".` : "";
+  const officeLabel =
+    state.zonaFilters.office === "all"
+      ? "todas las oficinas"
+      : payload.analytics.offices.find((office) => office.key === state.zonaFilters.office)?.label || "oficina filtrada";
   elements.zona.activeFilterLabel.textContent =
-    `Mostrando ${filteredUsers.length} de ${payload.analytics.summary.uniqueUsers} usuarios para ${getZonaPeriodLabel(state.zonaFilters.period)} y ${getZonaAmountLabel(state.zonaFilters.amount)}.${searchNote}`;
+    `Mostrando ${filteredUsers.length} de ${payload.analytics.summary.uniqueUsers} usuarios para ${officeLabel}, ${getZonaPeriodLabel(state.zonaFilters.period)} y ${getZonaAmountLabel(state.zonaFilters.amount)}.${searchNote}`;
 
   renderList(elements.zona.listFive, five, renderZonaUserCard, "No hay usuarios para este filtro.");
   renderList(elements.zona.listTen, ten, renderZonaUserCard, "No hay usuarios para este filtro.");
@@ -1126,14 +1223,31 @@ function getZonaAmountLabel(value) {
   }[value] || "todos los montos";
 }
 
+function syncOfficeFilterOptions(select, offices, selectedValue) {
+  if (!select) {
+    return;
+  }
+
+  const normalizedOffices = Array.isArray(offices) ? offices : [];
+  select.innerHTML = [
+    '<option value="all">Todas las oficinas</option>',
+    ...normalizedOffices.map(
+      (office) => `<option value="${escapeHtml(office.key)}">${escapeHtml(office.label)} (${office.count})</option>`
+    )
+  ].join("");
+  select.value = normalizedOffices.some((office) => office.key === selectedValue) ? selectedValue : "all";
+}
+
 function applyZeusFilters(users) {
   return users.filter((user) => {
+    const byOffice =
+      state.zeusFilters.office === "all" || user.officeKey === state.zeusFilters.office;
     const byPeriod =
       state.zeusFilters.period === "all" || user.preferredPeriod === state.zeusFilters.period;
     const byAmount =
       state.zeusFilters.amount === "all" ||
       user.preferredAmountBucket === state.zeusFilters.amount;
-    return byPeriod && byAmount;
+    return byOffice && byPeriod && byAmount;
   });
 }
 
@@ -1148,7 +1262,9 @@ function applyZeusSearch(items) {
       item.lastLoadAtDisplay,
       item.averageAmount,
       item.loadsCount,
-      item.totalAmount
+      item.totalAmount,
+      item.officeLabel,
+      (item.phoneLabels || []).join(" ")
     ]
       .join(" ")
       .toLowerCase()
@@ -1161,6 +1277,7 @@ function renderZeusView() {
   elements.zeus.filterFrom.value = state.config.zeus.filterFrom;
   elements.zeus.filterTo.value = state.config.zeus.filterTo;
   elements.zeus.interval.value = String(state.config.zeus.interval);
+  syncOfficeFilterOptions(elements.zeus.officeFilter, payload?.analytics?.offices, state.zeusFilters.office);
 
   if (state.syncing.zeus) {
     elements.zeus.statusPill.textContent = state.syncProgress.zeus || "Sincronizando...";
@@ -1235,8 +1352,12 @@ function renderZeusView() {
   elements.zeus.countMonth.textContent = String(monthRanking.length);
 
   const searchNote = state.searchQuery ? ` Búsqueda: "${state.searchQuery}".` : "";
+  const officeLabel =
+    state.zeusFilters.office === "all"
+      ? "todas las oficinas"
+      : payload.analytics.offices.find((office) => office.key === state.zeusFilters.office)?.label || "oficina filtrada";
   elements.zeus.activeFilterLabel.textContent =
-    `Mostrando ${filteredUsers.length} de ${payload.analytics.summary.uniqueUsers} usuarios para ${getZonaPeriodLabel(state.zeusFilters.period)} y ${getZonaAmountLabel(state.zeusFilters.amount)}.${searchNote}`;
+    `Mostrando ${filteredUsers.length} de ${payload.analytics.summary.uniqueUsers} usuarios para ${officeLabel}, ${getZonaPeriodLabel(state.zeusFilters.period)} y ${getZonaAmountLabel(state.zeusFilters.amount)}.${searchNote}`;
 
   renderList(elements.zeus.listFive, five, renderZonaUserCard, "No hay usuarios para este filtro.");
   renderList(elements.zeus.listTen, ten, renderZonaUserCard, "No hay usuarios para este filtro.");
@@ -1472,7 +1593,7 @@ function exportZonaCsv() {
   }
 
   const lines = [];
-  lines.push(['"Seccion"', '"Usuario"', '"Promedio"', '"Cantidad cargas"', '"Ultima carga"', '"Dias inactivo"'].join(";"));
+  lines.push(['"Seccion"', '"Usuario"', '"Oficina"', '"Telefonos"', '"Promedio"', '"Cantidad cargas"', '"Ultima carga"', '"Dias inactivo"'].join(";"));
 
   [
     ["5 a 9 dias", view.five],
@@ -1483,6 +1604,8 @@ function exportZonaCsv() {
       lines.push([
         `"${section}"`,
         `"${item.username}"`,
+        `"${item.officeLabel || ""}"`,
+        `"${(item.phoneLabels || []).join(", ")}"`,
         `"${formatCurrency(item.averageAmount)}"`,
         `"${item.loadsCount}"`,
         `"${item.lastLoadAtDisplay}"`,
@@ -1492,7 +1615,7 @@ function exportZonaCsv() {
   });
 
   lines.push("");
-  lines.push(['"Ranking"', '"Rank"', '"Usuario"', '"Monto"', '"Cantidad cargas"', '"Ultima carga"'].join(";"));
+  lines.push(['"Ranking"', '"Rank"', '"Usuario"', '"Oficina"', '"Telefonos"', '"Monto"', '"Cantidad cargas"', '"Ultima carga"'].join(";"));
 
   [["Semana", view.weekRanking], ["Mes", view.monthRanking]].forEach(([section, items]) => {
     items.forEach((item) => {
@@ -1500,6 +1623,8 @@ function exportZonaCsv() {
         `"${section}"`,
         `"${item.rank}"`,
         `"${item.username}"`,
+        `"${item.officeLabel || ""}"`,
+        `"${(item.phoneLabels || []).join(", ")}"`,
         `"${formatCurrency(item.totalAmount)}"`,
         `"${item.loadsCount}"`,
         `"${item.lastLoadAtDisplay}"`
@@ -1518,7 +1643,7 @@ function exportZeusCsv() {
   }
 
   const lines = [];
-  lines.push(['"Seccion"', '"Usuario"', '"Promedio"', '"Cantidad cargas"', '"Ultima carga"', '"Dias inactivo"'].join(";"));
+  lines.push(['"Seccion"', '"Usuario"', '"Oficina"', '"Telefonos"', '"Promedio"', '"Cantidad cargas"', '"Ultima carga"', '"Dias inactivo"'].join(";"));
 
   [
     ["5 a 9 dias", view.five],
@@ -1529,6 +1654,8 @@ function exportZeusCsv() {
       lines.push([
         `"${section}"`,
         `"${item.username}"`,
+        `"${item.officeLabel || ""}"`,
+        `"${(item.phoneLabels || []).join(", ")}"`,
         `"${formatCurrency(item.averageAmount)}"`,
         `"${item.loadsCount}"`,
         `"${item.lastLoadAtDisplay}"`,
@@ -1538,7 +1665,7 @@ function exportZeusCsv() {
   });
 
   lines.push("");
-  lines.push(['"Ranking"', '"Rank"', '"Usuario"', '"Monto"', '"Cantidad cargas"', '"Ultima carga"'].join(";"));
+  lines.push(['"Ranking"', '"Rank"', '"Usuario"', '"Oficina"', '"Telefonos"', '"Monto"', '"Cantidad cargas"', '"Ultima carga"'].join(";"));
 
   [["Semana", view.weekRanking], ["Mes", view.monthRanking]].forEach(([section, items]) => {
     items.forEach((item) => {
@@ -1546,6 +1673,8 @@ function exportZeusCsv() {
         `"${section}"`,
         `"${item.rank}"`,
         `"${item.username}"`,
+        `"${item.officeLabel || ""}"`,
+        `"${(item.phoneLabels || []).join(", ")}"`,
         `"${formatCurrency(item.totalAmount)}"`,
         `"${item.loadsCount}"`,
         `"${item.lastLoadAtDisplay}"`
@@ -1680,6 +1809,11 @@ function setupTabNavigation() {
 }
 
 function setupZonaFilters() {
+  elements.zona.officeFilter.addEventListener("change", () => {
+    state.zonaFilters.office = elements.zona.officeFilter.value;
+    renderZonaView();
+  });
+
   elements.zona.periodButtons.forEach((button) => {
     button.addEventListener("click", () => {
       state.zonaFilters.period = button.dataset.zonaPeriod;
@@ -1702,6 +1836,11 @@ function setupZonaFilters() {
 }
 
 function setupZeusFilters() {
+  elements.zeus.officeFilter.addEventListener("change", () => {
+    state.zeusFilters.office = elements.zeus.officeFilter.value;
+    renderZeusView();
+  });
+
   elements.zeus.periodButtons.forEach((button) => {
     button.addEventListener("click", () => {
       state.zeusFilters.period = button.dataset.zeusPeriod;
