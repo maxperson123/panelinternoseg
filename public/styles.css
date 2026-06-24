@@ -517,6 +517,10 @@ a {
   gap: 8px;
 }
 
+.fieldInline {
+  min-width: 220px;
+}
+
 .field span,
 .panelTools label span {
   color: var(--muted);
