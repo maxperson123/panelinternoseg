@@ -3,7 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ZonaEpic Intelligence | Multi-Panel Console</title>
+    <title>ElSecuaz | Multi-Panel Console</title>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -16,7 +17,7 @@
     <div class="appShell">
       <aside class="sidebar">
         <div class="sidebarBrand">
-          <p class="sidebarEyebrow">ZonaEpic Intelligence</p>
+          <p class="sidebarEyebrow">ElSecuaz</p>
           <h1>Admin Console</h1>
         </div>
 
@@ -46,9 +47,9 @@
           </button>
 
           <div class="profileCard">
-            <div class="profileAvatar">ZI</div>
+            <div class="profileAvatar">ES</div>
             <div>
-              <strong>Panel Interno</strong>
+              <strong>ElSecuaz</strong>
               <p>Multi Provider</p>
             </div>
           </div>
@@ -59,7 +60,7 @@
         <header class="topbar">
           <div class="topbarHeading">
             <p id="topbarKicker" class="topbarKicker">Inicio</p>
-            <h2 id="topbarTitle">Resumen cruzado de ZonaEpic y Zeus</h2>
+            <h2 id="topbarTitle">ElSecuaz | Resumen cruzado de ZonaEpic y Zeus</h2>
           </div>
 
           <div class="topbarActions">
@@ -80,7 +81,7 @@
                 <h3>Seguimiento consolidado de cargas, cuentas y actividad por proveedor.</h3>
                 <p class="subtitle">
                   Esta vista cruza el estado actual de ZonaEpic y Zeus, separa los datos de cada
-                  panel y te deja saltar directo a su análisis detallado.
+                  panel y trabaja con un máximo de 60 días de antigüedad para mantener la consola rápida.
                 </p>
               </div>
               <div class="heroBadge">
@@ -178,6 +179,7 @@
                   <span id="zonaSyncNote">Sin datos</span>
                 </div>
               </div>
+              <p class="controlsHint">ElSecuaz limita descarga y procesamiento a los últimos 60 días.</p>
             </section>
 
             <section class="stats">
@@ -220,6 +222,7 @@
                   <button class="segment" data-zona-period="morning">Mañana</button>
                   <button class="segment" data-zona-period="afternoon">Tarde</button>
                   <button class="segment" data-zona-period="night">Noche</button>
+                  <button class="segment" data-zona-period="overnight">Madrugada</button>
                 </div>
               </div>
 
@@ -248,7 +251,7 @@
                 <div class="panelHeader">
                   <div>
                     <p class="mini">Inactividad</p>
-                    <h3>5 a 9 días</h3>
+                    <h3>10 a 30 días</h3>
                   </div>
                   <strong id="zonaCountFive">0</strong>
                 </div>
@@ -267,7 +270,7 @@
                 <div class="panelHeader">
                   <div>
                     <p class="mini">Inactividad</p>
-                    <h3>10 a 14 días</h3>
+                    <h3>30 a 45 días</h3>
                   </div>
                   <strong id="zonaCountTen">0</strong>
                 </div>
@@ -286,7 +289,7 @@
                 <div class="panelHeader">
                   <div>
                     <p class="mini">Inactividad</p>
-                    <h3>15 días o más</h3>
+                    <h3>45 a 60 días</h3>
                   </div>
                   <strong id="zonaCountFifteen">0</strong>
                 </div>
@@ -389,6 +392,7 @@
                   <span id="zeusSyncNote">Sin datos</span>
                 </div>
               </div>
+              <p class="controlsHint">ElSecuaz limita descarga y procesamiento a los últimos 60 días.</p>
             </section>
 
             <section class="stats">
@@ -431,6 +435,7 @@
                   <button class="segment" data-zeus-period="morning">Mañana</button>
                   <button class="segment" data-zeus-period="afternoon">Tarde</button>
                   <button class="segment" data-zeus-period="night">Noche</button>
+                  <button class="segment" data-zeus-period="overnight">Madrugada</button>
                 </div>
               </div>
 
@@ -459,7 +464,7 @@
                 <div class="panelHeader">
                   <div>
                     <p class="mini">Inactividad</p>
-                    <h3>5 a 9 días</h3>
+                    <h3>10 a 30 días</h3>
                   </div>
                   <strong id="zeusCountFive">0</strong>
                 </div>
@@ -478,7 +483,7 @@
                 <div class="panelHeader">
                   <div>
                     <p class="mini">Inactividad</p>
-                    <h3>10 a 14 días</h3>
+                    <h3>30 a 45 días</h3>
                   </div>
                   <strong id="zeusCountTen">0</strong>
                 </div>
@@ -497,7 +502,7 @@
                 <div class="panelHeader">
                   <div>
                     <p class="mini">Inactividad</p>
-                    <h3>15 días o más</h3>
+                    <h3>45 a 60 días</h3>
                   </div>
                   <strong id="zeusCountFifteen">0</strong>
                 </div>

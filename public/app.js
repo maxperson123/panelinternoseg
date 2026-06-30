@@ -1,7 +1,10 @@
 const storageKey = "intel-multi-panel-config-v1";
+const contactStateStorageKey = "elsecuaz-contact-state-v1";
 const dbName = "intel-multi-panel-cache";
 const dbVersion = 2;
 const timeZone = "America/Argentina/Buenos_Aires";
+const maxLookbackDaysFallback = 60;
+const periodKeys = ["morning", "afternoon", "night", "overnight"];
 
 const elements = {
   topbarKicker: document.querySelector("#topbarKicker"),
@@ -184,7 +187,9 @@ const state = {
   currentViews: {
     zonaEpic: null,
     zeus: null
-  }
+  },
+  contactedUsers: {},
+  contactMatchCache: new Map()
 };
 
 let dbPromise;
@@ -204,13 +209,33 @@ function getDefaultDateRange(days) {
   };
 }
 
-function normalizeDateRange(from, to) {
+function getProviderMaxLookbackDays(providerKey) {
+  return Number(state.defaults.providers?.[providerKey]?.maxLookbackDays || maxLookbackDaysFallback);
+}
+
+function getEarliestAllowedIsoDate(maxLookbackDays = maxLookbackDaysFallback) {
+  const earliest = new Date();
+  earliest.setHours(0, 0, 0, 0);
+  earliest.setDate(earliest.getDate() - (maxLookbackDays - 1));
+  return earliest.toISOString().slice(0, 10);
+}
+
+function normalizeDateRange(from, to, maxLookbackDays = maxLookbackDaysFallback) {
   const today = todayIsoDate();
+  const earliestAllowed = getEarliestAllowedIsoDate(maxLookbackDays);
   let safeFrom = from || "";
   let safeTo = to || today;
 
   if (safeTo > today) {
     safeTo = today;
+  }
+
+  if (safeTo < earliestAllowed) {
+    safeTo = earliestAllowed;
+  }
+
+  if (safeFrom < earliestAllowed) {
+    safeFrom = earliestAllowed;
   }
 
   if (!safeFrom || safeFrom > safeTo) {
@@ -278,6 +303,26 @@ function loadStoredConfig() {
 
 function saveStoredConfig() {
   localStorage.setItem(storageKey, JSON.stringify(state.config));
+}
+
+function loadContactedUsers() {
+  try {
+    return JSON.parse(localStorage.getItem(contactStateStorageKey) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function saveContactedUsers() {
+  localStorage.setItem(contactStateStorageKey, JSON.stringify(state.contactedUsers));
+}
+
+function getContactedUserKey(providerKey, username) {
+  return `${providerKey}::${normalizeSearchQuery(username)}`;
+}
+
+function isUserContacted(providerKey, username) {
+  return Boolean(state.contactedUsers[getContactedUserKey(providerKey, username)]);
 }
 
 async function fetchJson(url, options = {}) {
@@ -552,20 +597,23 @@ function getPeriodByHour(hour) {
   if (hour >= 6 && hour < 12) {
     return "morning";
   }
-  if (hour >= 12 && hour < 20) {
+  if (hour >= 12 && hour < 18) {
     return "afternoon";
   }
-  return "night";
+  if (hour >= 18 && hour < 24) {
+    return "night";
+  }
+  return "overnight";
 }
 
 function getInactivityBucket(daysSinceLastLoad) {
-  if (daysSinceLastLoad >= 15) {
+  if (daysSinceLastLoad >= 45 && daysSinceLastLoad <= 60) {
     return "fifteen";
   }
-  if (daysSinceLastLoad >= 10) {
+  if (daysSinceLastLoad >= 30 && daysSinceLastLoad < 45) {
     return "ten";
   }
-  if (daysSinceLastLoad >= 5) {
+  if (daysSinceLastLoad >= 10 && daysSinceLastLoad < 30) {
     return "five";
   }
   return null;
@@ -584,7 +632,9 @@ function getMatchedContactsForUsername(username) {
   if (!normalizedUsername || normalizedUsername.length < 4) {
     return { officeLabel: "", officeKey: "", phoneLabels: [] };
   }
-
+  if (state.contactMatchCache.has(normalizedUsername)) {
+    return state.contactMatchCache.get(normalizedUsername);
+  }
   const matches = (state.defaults.contactsDirectory?.offices || [])
     .map((office) => {
       const phoneLabels = Array.from(
@@ -604,10 +654,13 @@ function getMatchedContactsForUsername(username) {
     .filter((office) => office.phoneLabels.length);
 
   if (!matches.length) {
-    return { officeLabel: "", officeKey: "", phoneLabels: [] };
+    const emptyMatch = { officeLabel: "", officeKey: "", phoneLabels: [] };
+    state.contactMatchCache.set(normalizedUsername, emptyMatch);
+    return emptyMatch;
   }
 
   const bestMatch = matches.sort((left, right) => right.phoneLabels.length - left.phoneLabels.length)[0];
+  state.contactMatchCache.set(normalizedUsername, bestMatch);
   return bestMatch;
 }
 
@@ -663,6 +716,7 @@ function buildZonaTopRanking(rows, days) {
         officeLabel: contactsMatch.officeLabel,
         officeKey: contactsMatch.officeKey,
         phoneLabels: contactsMatch.phoneLabels,
+        providerKey: "zonaEpic",
         metricAmount: user.totalAmount,
         metricLoads: user.loadsCount,
         metricDate: user.lastLoadAt.getTime()
@@ -691,7 +745,7 @@ function buildZonaAnalytics(rows) {
       loadsCount: 0,
       totalAmount: 0,
       lastLoadDate: parsedDate.date,
-      periodCounts: { morning: 0, afternoon: 0, night: 0 }
+      periodCounts: { morning: 0, afternoon: 0, night: 0, overnight: 0 }
     };
 
     current.loadsCount += 1;
@@ -707,7 +761,7 @@ function buildZonaAnalytics(rows) {
   }
 
   const users = Array.from(usersMap.values()).map((user) => {
-    const preferredPeriod = ["morning", "afternoon", "night"].reduce((best, current) => {
+    const preferredPeriod = periodKeys.reduce((best, current) => {
       return user.periodCounts[current] > user.periodCounts[best] ? current : best;
     }, "morning");
     const averageAmount = user.loadsCount ? user.totalAmount / user.loadsCount : 0;
@@ -728,6 +782,7 @@ function buildZonaAnalytics(rows) {
       officeLabel: contactsMatch.officeLabel,
       officeKey: contactsMatch.officeKey,
       phoneLabels: contactsMatch.phoneLabels,
+      providerKey: "zonaEpic",
       metricAmount: averageAmount,
       metricLoads: user.loadsCount,
       metricDate: user.lastLoadDate.getTime()
@@ -795,7 +850,8 @@ async function syncZonaBrowserCache(runtimeConfig) {
   const meta = await getCacheMeta(cacheKey);
   const requestedFrom = runtimeConfig.filterFrom;
   const requestedTo = runtimeConfig.filterTo;
-  const fullImportStart = (state.defaults.providers.zonaEpic.fullImportStart || "2025-01-01").slice(0, 10);
+  const configuredImportStart = (state.defaults.providers.zonaEpic.fullImportStart || "2025-01-01").slice(0, 10);
+  const fullImportStart = configuredImportStart > requestedFrom ? configuredImportStart : requestedFrom;
 
   let mode = "incremental";
   let importCursor = meta?.latestSyncedTo || null;
@@ -809,6 +865,9 @@ async function syncZonaBrowserCache(runtimeConfig) {
   }
 
   let current = addDaysToIso(importCursor || fullImportStart, 1);
+  if (current < requestedFrom) {
+    current = requestedFrom;
+  }
   const finalDay = todayIsoDate();
   let steps = 0;
   let totalDays = 0;
@@ -922,7 +981,11 @@ async function syncZonaEpic() {
   renderAll();
 
   try {
-    const normalized = normalizeDateRange(state.config.zonaEpic.filterFrom, state.config.zonaEpic.filterTo);
+    const normalized = normalizeDateRange(
+      state.config.zonaEpic.filterFrom,
+      state.config.zonaEpic.filterTo,
+      getProviderMaxLookbackDays("zonaEpic")
+    );
     state.config.zonaEpic.filterFrom = normalized.from;
     state.config.zonaEpic.filterTo = normalized.to;
     saveStoredConfig();
@@ -965,7 +1028,11 @@ async function syncZeus() {
   renderAll();
 
   try {
-    const normalized = normalizeDateRange(state.config.zeus.filterFrom, state.config.zeus.filterTo);
+    const normalized = normalizeDateRange(
+      state.config.zeus.filterFrom,
+      state.config.zeus.filterTo,
+      getProviderMaxLookbackDays("zeus")
+    );
     state.config.zeus.filterFrom = normalized.from;
     state.config.zeus.filterTo = normalized.to;
     saveStoredConfig();
@@ -1027,6 +1094,7 @@ function applyZonaFilters(users) {
 }
 
 function renderZonaUserCard(user) {
+  const providerKey = user.providerKey || "zonaEpic";
   const ownershipMeta = [
     user.officeLabel ? `Oficina: ${escapeHtml(user.officeLabel)}` : "",
     user.phoneLabels?.length ? `Teléfonos: ${escapeHtml(user.phoneLabels.join(", "))}` : ""
@@ -1035,11 +1103,15 @@ function renderZonaUserCard(user) {
     .join(" · ");
 
   return `
-    <article class="userCard copyableCard" data-username="${escapeHtml(user.username)}">
+    <article class="userCard copyableCard" data-provider="${escapeHtml(providerKey)}" data-username="${escapeHtml(user.username)}">
       <header>
         <button type="button" class="copyUsernameButton" data-copy-username="${escapeHtml(user.username)}">
           ${escapeHtml(user.username)}
         </button>
+        <label class="contactToggle">
+          <input type="checkbox" data-contacted-toggle="${escapeHtml(providerKey)}::${escapeHtml(user.username)}" ${isUserContacted(providerKey, user.username) ? "checked" : ""} />
+          <span>Contactado</span>
+        </label>
         <span>${formatCurrency(user.averageAmount)}</span>
       </header>
       <dl>
@@ -1059,6 +1131,7 @@ function renderZonaUserCard(user) {
 }
 
 function renderZonaRankingItem(item) {
+  const providerKey = item.providerKey || "zonaEpic";
   const ownershipMeta = [
     item.officeLabel ? `Oficina: ${escapeHtml(item.officeLabel)}` : "",
     item.phoneLabels?.length ? `Teléfonos: ${escapeHtml(item.phoneLabels.join(", "))}` : ""
@@ -1067,11 +1140,15 @@ function renderZonaRankingItem(item) {
     .join(" · ");
 
   return `
-    <article class="rankingItem copyableCard" data-username="${escapeHtml(item.username)}">
+    <article class="rankingItem copyableCard" data-provider="${escapeHtml(providerKey)}" data-username="${escapeHtml(item.username)}">
       <div class="rankingTop">
         <button type="button" class="copyUsernameButton" data-copy-username="${escapeHtml(item.username)}">
           #${item.rank} ${escapeHtml(item.username)}
         </button>
+        <label class="contactToggle">
+          <input type="checkbox" data-contacted-toggle="${escapeHtml(providerKey)}::${escapeHtml(item.username)}" ${isUserContacted(providerKey, item.username) ? "checked" : ""} />
+          <span>Contactado</span>
+        </label>
         <span>${formatCurrency(item.totalAmount)}</span>
       </div>
       <div class="rankingMeta">
@@ -1092,8 +1169,18 @@ function renderList(element, items, itemRenderer, emptyMessage) {
   element.innerHTML = items.map(itemRenderer).join("");
 }
 
+function withProviderKey(items, providerKey) {
+  return items.map((item) => ({ ...item, providerKey }));
+}
+
 function renderZonaView() {
   const payload = state.providerData.zonaEpic;
+  const minDate = getEarliestAllowedIsoDate(getProviderMaxLookbackDays("zonaEpic"));
+  const maxDate = todayIsoDate();
+  elements.zona.filterFrom.min = minDate;
+  elements.zona.filterFrom.max = maxDate;
+  elements.zona.filterTo.min = minDate;
+  elements.zona.filterTo.max = maxDate;
   elements.zona.filterFrom.value = state.config.zonaEpic.filterFrom;
   elements.zona.filterTo.value = state.config.zonaEpic.filterTo;
   elements.zona.interval.value = String(state.config.zonaEpic.interval);
@@ -1161,8 +1248,8 @@ function renderZonaView() {
   elements.zona.lastSync.textContent = formatClock(payload.meta.fetchedAt);
   elements.zona.syncNote.textContent =
     payload.meta.cacheMode === "full_import"
-      ? "Importación histórica guardada en este navegador"
-      : "Cache incremental por sesión"
+      ? "Importación local limitada a los últimos 60 días"
+      : "Cache incremental local de los últimos 60 días"
   ;
   elements.zona.filteredUsers.textContent = String(filteredUsers.length);
   elements.zona.totalUsers.textContent = String(payload.analytics.summary.uniqueUsers);
@@ -1183,11 +1270,11 @@ function renderZonaView() {
   elements.zona.activeFilterLabel.textContent =
     `Mostrando ${filteredUsers.length} de ${payload.analytics.summary.uniqueUsers} usuarios para ${officeLabel}, ${getZonaPeriodLabel(state.zonaFilters.period)} y ${getZonaAmountLabel(state.zonaFilters.amount)}.${searchNote}`;
 
-  renderList(elements.zona.listFive, five, renderZonaUserCard, "No hay usuarios para este filtro.");
-  renderList(elements.zona.listTen, ten, renderZonaUserCard, "No hay usuarios para este filtro.");
-  renderList(elements.zona.listFifteen, fifteen, renderZonaUserCard, "No hay usuarios para este filtro.");
-  renderList(elements.zona.weekRanking, weekRanking, renderZonaRankingItem, "No hay jugadores para este ranking.");
-  renderList(elements.zona.monthRanking, monthRanking, renderZonaRankingItem, "No hay jugadores para este ranking.");
+  renderList(elements.zona.listFive, withProviderKey(five, "zonaEpic"), renderZonaUserCard, "No hay usuarios para este filtro.");
+  renderList(elements.zona.listTen, withProviderKey(ten, "zonaEpic"), renderZonaUserCard, "No hay usuarios para este filtro.");
+  renderList(elements.zona.listFifteen, withProviderKey(fifteen, "zonaEpic"), renderZonaUserCard, "No hay usuarios para este filtro.");
+  renderList(elements.zona.weekRanking, withProviderKey(weekRanking, "zonaEpic"), renderZonaRankingItem, "No hay jugadores para este ranking.");
+  renderList(elements.zona.monthRanking, withProviderKey(monthRanking, "zonaEpic"), renderZonaRankingItem, "No hay jugadores para este ranking.");
 
   state.currentViews.zonaEpic = {
     filteredUsers,
@@ -1210,7 +1297,8 @@ function getZonaPeriodLabel(value) {
     all: "todos los horarios",
     morning: "mañana",
     afternoon: "tarde",
-    night: "noche"
+    night: "noche",
+    overnight: "madrugada"
   }[value] || "todos los horarios";
 }
 
@@ -1274,6 +1362,12 @@ function applyZeusSearch(items) {
 
 function renderZeusView() {
   const payload = state.providerData.zeus;
+  const minDate = getEarliestAllowedIsoDate(getProviderMaxLookbackDays("zeus"));
+  const maxDate = todayIsoDate();
+  elements.zeus.filterFrom.min = minDate;
+  elements.zeus.filterFrom.max = maxDate;
+  elements.zeus.filterTo.min = minDate;
+  elements.zeus.filterTo.max = maxDate;
   elements.zeus.filterFrom.value = state.config.zeus.filterFrom;
   elements.zeus.filterTo.value = state.config.zeus.filterTo;
   elements.zeus.interval.value = String(state.config.zeus.interval);
@@ -1339,7 +1433,7 @@ function renderZeusView() {
   const filteredAmount = filteredUsers.reduce((sum, item) => sum + item.totalAmount, 0);
 
   elements.zeus.lastSync.textContent = formatClock(payload.meta.fetchedAt);
-  elements.zeus.syncNote.textContent = `${payload.meta.totalRows} transferencias de jugadores cargadas`;
+  elements.zeus.syncNote.textContent = `${payload.meta.totalRows} transferencias de jugadores cargadas, con tope de 60 días`;
   elements.zeus.filteredUsers.textContent = String(filteredUsers.length);
   elements.zeus.totalUsers.textContent = String(payload.analytics.summary.uniqueUsers);
   elements.zeus.totalLoads.textContent = String(filteredLoads);
@@ -1359,11 +1453,11 @@ function renderZeusView() {
   elements.zeus.activeFilterLabel.textContent =
     `Mostrando ${filteredUsers.length} de ${payload.analytics.summary.uniqueUsers} usuarios para ${officeLabel}, ${getZonaPeriodLabel(state.zeusFilters.period)} y ${getZonaAmountLabel(state.zeusFilters.amount)}.${searchNote}`;
 
-  renderList(elements.zeus.listFive, five, renderZonaUserCard, "No hay usuarios para este filtro.");
-  renderList(elements.zeus.listTen, ten, renderZonaUserCard, "No hay usuarios para este filtro.");
-  renderList(elements.zeus.listFifteen, fifteen, renderZonaUserCard, "No hay usuarios para este filtro.");
-  renderList(elements.zeus.weekRanking, weekRanking, renderZonaRankingItem, "No hay jugadores para este ranking.");
-  renderList(elements.zeus.monthRanking, monthRanking, renderZonaRankingItem, "No hay jugadores para este ranking.");
+  renderList(elements.zeus.listFive, withProviderKey(five, "zeus"), renderZonaUserCard, "No hay usuarios para este filtro.");
+  renderList(elements.zeus.listTen, withProviderKey(ten, "zeus"), renderZonaUserCard, "No hay usuarios para este filtro.");
+  renderList(elements.zeus.listFifteen, withProviderKey(fifteen, "zeus"), renderZonaUserCard, "No hay usuarios para este filtro.");
+  renderList(elements.zeus.weekRanking, withProviderKey(weekRanking, "zeus"), renderZonaRankingItem, "No hay jugadores para este ranking.");
+  renderList(elements.zeus.monthRanking, withProviderKey(monthRanking, "zeus"), renderZonaRankingItem, "No hay jugadores para este ranking.");
 
   state.currentViews.zeus = {
     filteredUsers,
@@ -1399,9 +1493,9 @@ function renderOverviewSummaryCard(providerKey, payload, error) {
         <div class="summaryMini"><span>Última sync</span><strong>${formatClock(payload.meta.fetchedAt)}</strong></div>
       </div>
       <div class="pillRow">
-        <span class="miniPill">5-9 días: ${payload.analytics.summary.inactiveFive}</span>
-        <span class="miniPill">10-14 días: ${payload.analytics.summary.inactiveTen}</span>
-        <span class="miniPill">15+ días: ${payload.analytics.summary.inactiveFifteen}</span>
+        <span class="miniPill">10-30 días: ${payload.analytics.summary.inactiveFive}</span>
+        <span class="miniPill">30-45 días: ${payload.analytics.summary.inactiveTen}</span>
+        <span class="miniPill">45-60 días: ${payload.analytics.summary.inactiveFifteen}</span>
       </div>
     `;
   }
@@ -1414,9 +1508,9 @@ function renderOverviewSummaryCard(providerKey, payload, error) {
       <div class="summaryMini"><span>Última sync</span><strong>${formatClock(payload.meta.fetchedAt)}</strong></div>
     </div>
     <div class="pillRow">
-      <span class="miniPill">5-9 días: ${payload.analytics.summary.inactiveFive}</span>
-      <span class="miniPill">10-14 días: ${payload.analytics.summary.inactiveTen}</span>
-      <span class="miniPill">15+ días: ${payload.analytics.summary.inactiveFifteen}</span>
+      <span class="miniPill">10-30 días: ${payload.analytics.summary.inactiveFive}</span>
+      <span class="miniPill">30-45 días: ${payload.analytics.summary.inactiveTen}</span>
+      <span class="miniPill">45-60 días: ${payload.analytics.summary.inactiveFifteen}</span>
     </div>
   `;
 }
@@ -1500,6 +1594,11 @@ function renderOverview() {
 }
 
 function renderSettings() {
+  const focusedElement = document.activeElement;
+  if (state.activeTab === "settings" && focusedElement && focusedElement.closest("#settingsView")) {
+    return;
+  }
+
   elements.settings.zonaBaseUrl.value = state.config.zonaEpic.baseUrl;
   elements.settings.zonaSessionId.value = state.config.zonaEpic.sessionId;
   elements.settings.zonaToken.value = state.config.zonaEpic.token;
@@ -1529,7 +1628,7 @@ function setActiveTab(tabKey) {
   const titles = {
     overview: {
       kicker: "Inicio",
-      title: "Resumen cruzado de ZonaEpic y Zeus"
+      title: "ElSecuaz | Resumen cruzado de ZonaEpic y Zeus"
     },
     zonaEpic: {
       kicker: "ZonaEpic",
@@ -1596,9 +1695,9 @@ function exportZonaCsv() {
   lines.push(['"Seccion"', '"Usuario"', '"Oficina"', '"Telefonos"', '"Promedio"', '"Cantidad cargas"', '"Ultima carga"', '"Dias inactivo"'].join(";"));
 
   [
-    ["5 a 9 dias", view.five],
-    ["10 a 14 dias", view.ten],
-    ["15 dias o mas", view.fifteen]
+    ["10 a 30 dias", view.five],
+    ["30 a 45 dias", view.ten],
+    ["45 a 60 dias", view.fifteen]
   ].forEach(([section, items]) => {
     items.forEach((item) => {
       lines.push([
@@ -1646,9 +1745,9 @@ function exportZeusCsv() {
   lines.push(['"Seccion"', '"Usuario"', '"Oficina"', '"Telefonos"', '"Promedio"', '"Cantidad cargas"', '"Ultima carga"', '"Dias inactivo"'].join(";"));
 
   [
-    ["5 a 9 dias", view.five],
-    ["10 a 14 dias", view.ten],
-    ["15 dias o mas", view.fifteen]
+    ["10 a 30 dias", view.five],
+    ["30 a 45 dias", view.ten],
+    ["45 a 60 dias", view.fifteen]
   ].forEach(([section, items]) => {
     items.forEach((item) => {
       lines.push([
@@ -1755,8 +1854,8 @@ async function hydrateConfig() {
   } catch {
     state.defaults = {
       providers: {
-        zonaEpic: { baseUrl: "https://admin.zonaepic.vip", sessionId: "", token: "", fullImportStart: "2025-01-01" },
-        zeus: { baseUrl: "https://admin.casinozeus.tech", username: "", password: "" }
+        zonaEpic: { baseUrl: "https://admin.zonaepic.vip", sessionId: "", token: "", fullImportStart: "2025-01-01", maxLookbackDays: maxLookbackDaysFallback },
+        zeus: { baseUrl: "https://admin.casinozeus.tech", username: "", password: "", maxLookbackDays: maxLookbackDaysFallback }
       }
     };
   }
@@ -1783,12 +1882,22 @@ async function hydrateConfig() {
     interval: Number(stored?.zeus?.interval || 30000)
   };
 
-  const zonaRange = normalizeDateRange(state.config.zonaEpic.filterFrom, state.config.zonaEpic.filterTo);
-  const zeusRange = normalizeDateRange(state.config.zeus.filterFrom, state.config.zeus.filterTo);
+  const zonaRange = normalizeDateRange(
+    state.config.zonaEpic.filterFrom,
+    state.config.zonaEpic.filterTo,
+    getProviderMaxLookbackDays("zonaEpic")
+  );
+  const zeusRange = normalizeDateRange(
+    state.config.zeus.filterFrom,
+    state.config.zeus.filterTo,
+    getProviderMaxLookbackDays("zeus")
+  );
   state.config.zonaEpic.filterFrom = zonaRange.from;
   state.config.zonaEpic.filterTo = zonaRange.to;
   state.config.zeus.filterFrom = zeusRange.from;
   state.config.zeus.filterTo = zeusRange.to;
+  state.contactedUsers = loadContactedUsers();
+  state.contactMatchCache = new Map();
   saveStoredConfig();
 }
 
@@ -1921,6 +2030,10 @@ function setupSearch() {
 
 function setupCopyHandlers() {
   document.body.addEventListener("click", async (event) => {
+    if (event.target.closest(".contactToggle")) {
+      return;
+    }
+
     const usernameTrigger = event.target.closest("[data-copy-username]");
     const card = event.target.closest(".copyableCard");
 
@@ -1958,6 +2071,18 @@ function setupCopyHandlers() {
       const targetStatus = card.closest("#zeusView") ? elements.zeus.statusPill : elements.zona.statusPill;
       targetStatus.textContent = "No se pudo copiar el usuario";
     }
+  });
+}
+
+function setupContactedHandlers() {
+  document.body.addEventListener("change", (event) => {
+    const toggle = event.target.closest("[data-contacted-toggle]");
+    if (!toggle) {
+      return;
+    }
+
+    state.contactedUsers[toggle.dataset.contactedToggle] = toggle.checked;
+    saveContactedUsers();
   });
 }
 
@@ -2037,6 +2162,7 @@ async function bootstrap() {
   setupPanelTools("zonaEpic", elements.zona.toolPanels);
   setupPanelTools("zeus", elements.zeus.toolPanels);
   setupCopyHandlers();
+  setupContactedHandlers();
   setActiveTab("overview");
   renderAll();
   resetProviderTimer("zonaEpic");

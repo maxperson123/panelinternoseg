@@ -13,6 +13,8 @@ const contactsDir = path.join(__dirname, "data", "contacts");
 const cacheDir = path.join(__dirname, ".cache");
 const cacheFile = path.join(cacheDir, "panel-cache.json");
 const cacheSchemaVersion = 2;
+const maxLookbackDays = 60;
+const periodKeys = ["morning", "afternoon", "night", "overnight"];
 const defaultZonaBaseUrl = "https://admin.zonaepic.vip";
 const defaultZeusBaseUrl = "https://admin.casinozeus.tech";
 
@@ -704,6 +706,7 @@ function clampDateRange(fromDate, toDateExclusive, fallbackDays) {
   const todayStart = startOfDay(new Date());
   const tomorrowStart = addDays(todayStart, 1);
   const fallbackFrom = addDays(todayStart, -fallbackDays);
+  const earliestAllowed = addDays(todayStart, -(maxLookbackDays - 1));
 
   let safeFrom = isValidDate(fromDate) ? fromDate : fallbackFrom;
   let safeToExclusive = isValidDate(toDateExclusive) ? toDateExclusive : tomorrowStart;
@@ -714,6 +717,15 @@ function clampDateRange(fromDate, toDateExclusive, fallbackDays) {
 
   if (safeFrom >= safeToExclusive) {
     safeFrom = addDays(safeToExclusive, -fallbackDays);
+  }
+
+  if (safeFrom < earliestAllowed) {
+    safeFrom = earliestAllowed;
+  }
+
+  if (safeFrom >= safeToExclusive) {
+    safeFrom = earliestAllowed;
+    safeToExclusive = tomorrowStart;
   }
 
   return {
@@ -922,10 +934,13 @@ function getPeriodByHour(hour) {
   if (hour >= 6 && hour < 12) {
     return "morning";
   }
-  if (hour >= 12 && hour < 20) {
+  if (hour >= 12 && hour < 18) {
     return "afternoon";
   }
-  return "night";
+  if (hour >= 18 && hour < 24) {
+    return "night";
+  }
+  return "overnight";
 }
 
 function getAmountBucket(amount) {
@@ -942,13 +957,13 @@ function getAmountBucket(amount) {
 }
 
 function getInactivityBucket(daysSinceLastLoad) {
-  if (daysSinceLastLoad >= 15) {
+  if (daysSinceLastLoad >= 45 && daysSinceLastLoad <= 60) {
     return "fifteen";
   }
-  if (daysSinceLastLoad >= 10) {
+  if (daysSinceLastLoad >= 30 && daysSinceLastLoad < 45) {
     return "ten";
   }
-  if (daysSinceLastLoad >= 5) {
+  if (daysSinceLastLoad >= 10 && daysSinceLastLoad < 30) {
     return "five";
   }
   return null;
@@ -1042,7 +1057,7 @@ function buildAnalytics(rows) {
       lastLoadLabel: row[4] || "0,00",
       lastLoadAmount: amount,
       lastLoadAtLabel: parsedDate.raw,
-      periodCounts: { morning: 0, afternoon: 0, night: 0 },
+      periodCounts: { morning: 0, afternoon: 0, night: 0, overnight: 0 },
       amountCounts: { small: 0, medium: 0, large: 0, other: 0 }
     };
 
@@ -1062,7 +1077,7 @@ function buildAnalytics(rows) {
   }
 
   const users = Array.from(usersMap.values()).map((user) => {
-    const preferredPeriod = ["morning", "afternoon", "night"].reduce((best, current) => {
+    const preferredPeriod = periodKeys.reduce((best, current) => {
       return user.periodCounts[current] > user.periodCounts[best] ? current : best;
     }, "morning");
 
@@ -1175,7 +1190,10 @@ function getMatchedPhoneLabels(contactsDirectory, officeLabel, username) {
   if (!office || !usernameKey || usernameKey.length < 4) {
     return [];
   }
-
+  office.matchCache ||= new Map();
+  if (office.matchCache.has(usernameKey)) {
+    return office.matchCache.get(usernameKey);
+  }
   const labels = new Set();
 
   for (const entry of office.entries) {
@@ -1183,8 +1201,9 @@ function getMatchedPhoneLabels(contactsDirectory, officeLabel, username) {
       labels.add(entry.phoneLabel);
     }
   }
-
-  return Array.from(labels).sort((left, right) => left.localeCompare(right));
+  const matchedLabels = Array.from(labels).sort((left, right) => left.localeCompare(right));
+  office.matchCache.set(usernameKey, matchedLabels);
+  return matchedLabels;
 }
 
 function buildZeusTopRanking(loads, days, userLookup) {
@@ -1284,13 +1303,19 @@ function buildZeusAnalytics(transfers, contactsDirectory) {
       }).format(item.createdAtDate)
     );
     const period =
-      hour >= 6 && hour < 12 ? "morning" : hour >= 12 && hour < 20 ? "afternoon" : "night";
+      hour >= 6 && hour < 12
+        ? "morning"
+        : hour >= 12 && hour < 18
+          ? "afternoon"
+          : hour >= 18 && hour < 24
+            ? "night"
+            : "overnight";
     const current = usersMap.get(item.username) || {
       username: item.username,
       totalAmount: 0,
       loadsCount: 0,
       lastLoadDate: item.createdAtDate,
-      periodCounts: { morning: 0, afternoon: 0, night: 0 },
+      periodCounts: { morning: 0, afternoon: 0, night: 0, overnight: 0 },
       officeCounts: {}
     };
 
@@ -1310,13 +1335,12 @@ function buildZeusAnalytics(transfers, contactsDirectory) {
 
   const users = Array.from(usersMap.values())
     .map((user) => {
-      const preferredPeriod = ["morning", "afternoon", "night"].reduce((best, current) => {
+      const preferredPeriod = periodKeys.reduce((best, current) => {
         return user.periodCounts[current] > user.periodCounts[best] ? current : best;
       }, "morning");
       const averageAmount = user.loadsCount ? user.totalAmount / user.loadsCount : 0;
       const daysSinceLastLoad = Math.floor((now.getTime() - user.lastLoadDate.getTime()) / 86400000);
-      const inactivityBucket =
-        daysSinceLastLoad >= 15 ? "fifteen" : daysSinceLastLoad >= 10 ? "ten" : daysSinceLastLoad >= 5 ? "five" : null;
+      const inactivityBucket = getInactivityBucket(daysSinceLastLoad);
       const officeLabel = getBestOfficeLabel(user.officeCounts);
       const phoneLabels = getMatchedPhoneLabels(contactsDirectory, officeLabel, user.username);
 
@@ -1389,12 +1413,14 @@ async function handleApiConfig(response) {
         baseUrl: process.env.ZONAEPIC_BASE_URL || defaultZonaBaseUrl,
         sessionId: process.env.ZONAEPIC_PHPSESSID || "",
         token: process.env.ZONAEPIC_TOKEN || "",
-        fullImportStart: process.env.ZONAEPIC_FULL_IMPORT_START || "2025-01-01"
+        fullImportStart: process.env.ZONAEPIC_FULL_IMPORT_START || "2025-01-01",
+        maxLookbackDays
       },
       zeus: {
         baseUrl: process.env.ZEUS_BASE_URL || defaultZeusBaseUrl,
         username: process.env.ZEUS_USERNAME || "",
-        password: process.env.ZEUS_PASSWORD || ""
+        password: process.env.ZEUS_PASSWORD || "",
+        maxLookbackDays
       }
     },
     contactsDirectory: buildPublicContactsDirectory(contactsDirectory)
