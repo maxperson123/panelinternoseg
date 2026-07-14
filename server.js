@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { createServer } from "node:http";
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -10,15 +10,16 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, "public");
 const contactsDir = path.join(__dirname, "data", "contacts");
-const cacheDir = path.join(__dirname, ".cache");
-const cacheFile = path.join(cacheDir, "panel-cache.json");
-const cacheSchemaVersion = 2;
 const maxLookbackDays = 60;
 const periodKeys = ["morning", "afternoon", "night", "overnight"];
 const defaultZonaBaseUrl = "https://admin.zonaepic.vip";
 const defaultZeusBaseUrl = "https://admin.casinozeus.tech";
 let contactsDirectoryCache = null;
 let contactsDirectoryCacheStamp = "";
+let contactsDirectoryLastCheckedAt = 0;
+const contactsDirectoryCheckTtlMs = Number(process.env.CONTACTS_DIRECTORY_CHECK_TTL_MS || 30000);
+const sessionTokenCache = new Map();
+const sessionTokenTtlMs = Number(process.env.ZONAEPIC_TOKEN_CACHE_TTL_MS || 45000);
 
 function requireEnv(name) {
   const value = process.env[name];
@@ -94,24 +95,6 @@ function getZeusRequestConfig(overrides = {}) {
   };
 }
 
-async function readCacheStore() {
-  try {
-    const raw = await readFile(cacheFile, "utf8");
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
-}
-
-async function writeCacheStore(store) {
-  await mkdir(cacheDir, { recursive: true });
-  await writeFile(cacheFile, JSON.stringify(store), "utf8");
-}
-
-function getCacheKey(baseUrl, username) {
-  return `${baseUrl}::${username || "*"}`;
-}
-
 function getZonaBrowserCacheKey(baseUrl, sessionId) {
   const fingerprint = String(sessionId || "").trim().slice(0, 16) || "*";
   return `${baseUrl}::${fingerprint}`;
@@ -157,8 +140,22 @@ function getDefaultRange(lookbackDays = 30) {
 }
 
 async function getSessionToken(config) {
-  // Always refresh the CSRF token from the report page. Manually pasted tokens
-  // expire quickly and are unreliable across Vercel invocations.
+  // Reuse a just-scraped token for a short window instead of re-fetching
+  // report_balances.php on every single call. The frontend's initial
+  // "full import" drives one HTTP request per day (potentially hundreds when
+  // importing months of history), and each of those previously triggered a
+  // brand new token scrape even though the session's CSRF token doesn't
+  // rotate that fast. This cache is per-process (in memory) and short-lived,
+  // so a cold start / new deploy / stale-token edge case still refreshes
+  // normally after the TTL expires.
+  const cacheKey = `${config.baseUrl}::${config.sessionId}`;
+  const cached = sessionTokenCache.get(cacheKey);
+  const now = Date.now();
+
+  if (cached && now - cached.fetchedAt < sessionTokenTtlMs) {
+    return cached.token;
+  }
+
   const response = await fetch(config.reportPageUrl, {
     headers: {
       Cookie: `PHPSESSID=${config.sessionId}`,
@@ -182,6 +179,7 @@ async function getSessionToken(config) {
     throw new Error("No pude extraer el token fresco desde report_balances.php. Revisa PHPSESSID.");
   }
 
+  sessionTokenCache.set(cacheKey, { token: tokenMatch[1], fetchedAt: now });
   return tokenMatch[1];
 }
 
@@ -499,6 +497,15 @@ function parseVCardEntries(rawContent) {
 }
 
 async function loadContactsDirectory() {
+  // Zeus snapshots can be polled every ~15s, and previously each of those
+  // calls did a readdir + stat() of every office directory/.vcf file just to
+  // check whether the on-disk contacts changed, even though the directory
+  // rarely does. Skip that disk I/O entirely if we verified it recently.
+  const now = Date.now();
+  if (contactsDirectoryCache && now - contactsDirectoryLastCheckedAt < contactsDirectoryCheckTtlMs) {
+    return contactsDirectoryCache;
+  }
+
   try {
     const officeEntries = await readdir(contactsDir, { withFileTypes: true });
     const cacheParts = [];
@@ -523,6 +530,7 @@ async function loadContactsDirectory() {
     }
 
     const cacheStamp = cacheParts.sort().join("|");
+    contactsDirectoryLastCheckedAt = now;
     if (contactsDirectoryCache && contactsDirectoryCacheStamp === cacheStamp) {
       return contactsDirectoryCache;
     }
@@ -749,18 +757,28 @@ function clampDateRange(fromDate, toDateExclusive, fallbackDays) {
     safeFrom = addDays(safeToExclusive, -fallbackDays);
   }
 
+  // If the whole requested window is older than what ZonaEpic supports
+  // (maxLookbackDays), report it explicitly instead of silently substituting
+  // a completely different range. Previously this branch reset safeFrom/
+  // safeToExclusive to the full last-60-days window, so a request for an old,
+  // out-of-range single day silently returned 60 days of unrelated data
+  // instead of failing or being clamped predictably.
+  if (safeToExclusive <= earliestAllowed) {
+    return {
+      from: safeFrom,
+      toExclusive: safeToExclusive,
+      outOfRange: true
+    };
+  }
+
   if (safeFrom < earliestAllowed) {
     safeFrom = earliestAllowed;
   }
 
-  if (safeFrom >= safeToExclusive) {
-    safeFrom = earliestAllowed;
-    safeToExclusive = tomorrowStart;
-  }
-
   return {
     from: safeFrom,
-    toExclusive: safeToExclusive
+    toExclusive: safeToExclusive,
+    outOfRange: false
   };
 }
 
@@ -768,20 +786,56 @@ function getRowKey(row) {
   return row.join("|");
 }
 
-function mergeRows(existingRows, newRows) {
-  const merged = new Map();
+// Builds a multiset (key -> {row, count}) of the rows that share the exact
+// same column values, so legitimate repeated rows (two distinct loads that
+// happen to have identical date/origin/destination/amount) are not collapsed.
+function buildRowMultiset(rows) {
+  const counts = new Map();
 
-  for (const row of [...existingRows, ...newRows]) {
-    const parsedDate = parseLoadDate(row[0]);
-
-    if (!parsedDate) {
+  for (const row of rows) {
+    if (!parseLoadDate(row[0])) {
       continue;
     }
 
-    merged.set(getRowKey(row), row);
+    const key = getRowKey(row);
+    const bucket = counts.get(key);
+
+    if (bucket) {
+      bucket.count += 1;
+    } else {
+      counts.set(key, { row, count: 1 });
+    }
   }
 
-  return Array.from(merged.values()).sort((left, right) => {
+  return counts;
+}
+
+function mergeRows(existingRows, newRows) {
+  // Overlapping windows (e.g. the incremental re-fetch of the last known day)
+  // return the same underlying rows again, so we can't just union the two
+  // arrays as-is or genuinely repeated identical rows would double up on
+  // every refresh. Instead we take, per distinct row key, the MAX count seen
+  // between the existing cache and the new fetch: an unchanged overlap keeps
+  // its count, while a day that gained more matching transactions since the
+  // last sync grows to the new (larger) count. This avoids both duplicating
+  // re-fetched rows and silently dropping genuinely repeated ones.
+  const existingCounts = buildRowMultiset(existingRows);
+  const newCounts = buildRowMultiset(newRows);
+  const allKeys = new Set([...existingCounts.keys(), ...newCounts.keys()]);
+  const merged = [];
+
+  for (const key of allKeys) {
+    const existingBucket = existingCounts.get(key);
+    const newBucket = newCounts.get(key);
+    const count = Math.max(existingBucket?.count || 0, newBucket?.count || 0);
+    const row = (newBucket || existingBucket).row;
+
+    for (let i = 0; i < count; i += 1) {
+      merged.push(row);
+    }
+  }
+
+  return merged.sort((left, right) => {
     const leftDate = parseLoadDate(left[0])?.date?.getTime() || 0;
     const rightDate = parseLoadDate(right[0])?.date?.getTime() || 0;
     return rightDate - leftDate;
@@ -858,105 +912,6 @@ async function fetchWindowedBalances({
     truncated,
     firstSuccessfulDate: firstSuccessfulDate ? firstSuccessfulDate.toISOString() : null,
     skippedRanges
-  };
-}
-
-async function getCachedOrFreshRows({
-  config,
-  token,
-  username,
-  requestedFromDate,
-  pageSize
-}) {
-  const store = await readCacheStore();
-  const cacheKey = getCacheKey(config.baseUrl, username);
-  const cachedEntry = store[cacheKey];
-  const maxRowsPerWindow = Number(process.env.ZONAEPIC_WINDOW_MAX_ROWS || 20000);
-  const now = new Date();
-  const configuredImportStart = new Date(
-    process.env.ZONAEPIC_FULL_IMPORT_START || "2025-11-01T00:00:00-03:00"
-  );
-  const importStart =
-    requestedFromDate && requestedFromDate < configuredImportStart
-      ? requestedFromDate
-      : configuredImportStart;
-  const rangeEnd = addDays(startOfDay(now), 1);
-  const needsFullReimport =
-    !cachedEntry ||
-    cachedEntry.schemaVersion !== cacheSchemaVersion ||
-    !cachedEntry.importedFrom ||
-    new Date(cachedEntry.importedFrom) > importStart;
-
-  if (needsFullReimport) {
-    const fullImport = await fetchWindowedBalances({
-      config,
-      token,
-      username,
-      startDate: importStart,
-      endDate: rangeEnd,
-      pageSize,
-      maxRowsPerWindow
-    });
-    const mergedRows = mergeRows([], fullImport.rows);
-
-    store[cacheKey] = {
-      schemaVersion: cacheSchemaVersion,
-      baseUrl: config.baseUrl,
-      username,
-      importedFrom: (fullImport.firstSuccessfulDate || importStart.toISOString()),
-      rows: mergedRows,
-      latestRowDate: parseLoadDate(mergedRows[0]?.[0] || "")?.date?.toISOString() || null,
-      syncedAt: new Date().toISOString(),
-      skippedRanges: fullImport.skippedRanges || []
-    };
-    await writeCacheStore(store);
-
-    return {
-      rows: mergedRows,
-      totalRows: mergedRows.length,
-      processedRows: mergedRows.length,
-      truncated: fullImport.truncated,
-      cacheMode: "full_import",
-      importedFrom: fullImport.firstSuccessfulDate || importStart.toISOString(),
-      skippedRanges: fullImport.skippedRanges || []
-    };
-  }
-
-  const latestKnownDate = cachedEntry.latestRowDate
-    ? new Date(cachedEntry.latestRowDate)
-    : importStart;
-  const incrementalStart = addDays(startOfDay(latestKnownDate), -1);
-  const incrementalImport = await fetchWindowedBalances({
-    config,
-    token,
-    username,
-    startDate: incrementalStart < importStart ? importStart : incrementalStart,
-    endDate: rangeEnd,
-    pageSize,
-    maxRowsPerWindow
-  });
-  const mergedRows = mergeRows(cachedEntry.rows || [], incrementalImport.rows);
-
-  store[cacheKey] = {
-    schemaVersion: cacheSchemaVersion,
-    baseUrl: config.baseUrl,
-    username,
-    importedFrom: cachedEntry.importedFrom || importStart.toISOString(),
-    rows: mergedRows,
-    latestRowDate: parseLoadDate(mergedRows[0]?.[0] || "")?.date?.toISOString() || null,
-    syncedAt: new Date().toISOString(),
-    skippedRanges: cachedEntry.skippedRanges || []
-  };
-  await writeCacheStore(store);
-
-  return {
-    rows: mergedRows,
-    totalRows: mergedRows.length,
-    processedRows: incrementalImport.rows.length,
-    truncated: incrementalImport.truncated,
-    cacheMode: "incremental",
-    importedFrom: cachedEntry.importedFrom || importStart.toISOString(),
-    skippedRanges: cachedEntry.skippedRanges || []
   };
 }
 
@@ -1505,6 +1460,19 @@ async function handleApiLoads(requestUrl, response) {
       parsedTo ? addDays(parsedTo, 1) : null,
       defaultLookbackDays
     );
+    if (safeRange.outOfRange) {
+      sendJson(response, 409, {
+        error: `El rango solicitado supera el limite de ${maxLookbackDays} dias hacia atras soportado por ZonaEpic.`,
+        code: "UNSUPPORTED_RANGE",
+        meta: {
+          filterFrom: toInputDateValue(safeRange.from),
+          filterTo: toInputDateValue(addDays(safeRange.toExclusive, -1)),
+          maxLookbackDays
+        }
+      });
+      return;
+    }
+
     const filterFrom = safeRange.from;
     const filterToExclusive = safeRange.toExclusive;
     const token = await getSessionToken(config);
@@ -1578,6 +1546,26 @@ async function handleApiWindow(requestUrl, response) {
       parsedTo ? addDays(parsedTo, 1) : null,
       defaultLookbackDays
     );
+
+    if (safeRange.outOfRange) {
+      // The requested window falls entirely before what ZonaEpic supports
+      // (maxLookbackDays). Fail fast with the same "historico inicial" wording
+      // the frontend's full-import loop already knows how to handle (it skips
+      // the day and moves on), instead of hitting the network for a doomed
+      // request or silently substituting an unrelated 60-day range.
+      sendJson(response, 409, {
+        error: "ZonaEpic no devolvio datos para este tramo historico inicial.",
+        code: "UNSUPPORTED_RANGE",
+        meta: {
+          filterFrom: toInputDateValue(safeRange.from),
+          filterTo: toInputDateValue(addDays(safeRange.toExclusive, -1)),
+          maxLookbackDays,
+          skippedRanges: []
+        }
+      });
+      return;
+    }
+
     const filterFrom = safeRange.from;
     const filterToExclusive = safeRange.toExclusive;
     const token = await getSessionToken(config);
@@ -1637,6 +1625,20 @@ async function handleApiZeusSnapshot(requestUrl, response) {
       parsedTo ? addDays(parsedTo, 1) : null,
       defaultLookbackDays
     );
+
+    if (safeRange.outOfRange) {
+      sendJson(response, 409, {
+        error: `El rango solicitado supera el limite de ${maxLookbackDays} dias hacia atras soportado por Zeus.`,
+        code: "UNSUPPORTED_RANGE",
+        meta: {
+          filterFrom: toInputDateValue(safeRange.from),
+          filterTo: toInputDateValue(addDays(safeRange.toExclusive, -1)),
+          maxLookbackDays
+        }
+      });
+      return;
+    }
+
     const pageSize = Math.min(30, Number(body.limit || process.env.ZEUS_PAGE_SIZE || 30));
     const auth = await loginZeus(config);
     const profile = await fetchZeusJson(
@@ -1705,7 +1707,16 @@ async function handleStatic(requestUrl, response) {
   let pathname = requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname;
   const filePath = path.normalize(path.join(publicDir, pathname));
 
-  if (!filePath.startsWith(publicDir)) {
+  // Use path.relative instead of a plain startsWith prefix check: a prefix
+  // match would wrongly accept a sibling directory like "public-backup"
+  // because the string "/app/public-backup" starts with "/app/public".
+  const relativeToPublic = path.relative(publicDir, filePath);
+  const escapesPublicDir =
+    relativeToPublic === ".." ||
+    relativeToPublic.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativeToPublic);
+
+  if (escapesPublicDir) {
     response.writeHead(403);
     response.end("Forbidden");
     return;

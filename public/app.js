@@ -361,6 +361,23 @@ function copyToClipboard(text) {
   return Promise.resolve();
 }
 
+// Builds a safe, quoted CSV cell from arbitrary (possibly external) data:
+// - Escapes embedded double quotes by doubling them (RFC 4180).
+// - Neutralizes spreadsheet formula injection (CSV/Excel) by prefixing the
+//   value with an apostrophe when it starts with a character (=, +, -, @)
+//   that Excel/Sheets would otherwise interpret as the start of a formula.
+//   This matters because username/officeLabel/phoneLabels come from external
+//   panels (ZonaEpic/Zeus) and are not controlled by this app.
+function csvCell(value) {
+  let text = value === null || value === undefined ? "" : String(value);
+
+  if (/^[=+\-@]/.test(text)) {
+    text = `'${text}`;
+  }
+
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
 function downloadTextFile(filename, content, mimeType = "text/plain;charset=utf-8") {
   const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
@@ -1707,20 +1724,20 @@ function exportOverviewCsv() {
 
   lines.push([
     '"ZonaEpic"',
-    `"${zona ? "ok" : state.providerErrors.zonaEpic || "sin datos"}"`,
+    csvCell(zona ? "ok" : state.providerErrors.zonaEpic || "sin datos"),
     '"Usuarios"',
-    `"${zona?.analytics?.summary?.uniqueUsers ?? "-"}"`,
+    csvCell(zona?.analytics?.summary?.uniqueUsers ?? "-"),
     '"Monto"',
-    `"${zona ? formatCurrency(zona.analytics.summary.totalAmount) : "-"}"`
+    csvCell(zona ? formatCurrency(zona.analytics.summary.totalAmount) : "-")
   ].join(";"));
 
   lines.push([
     '"Zeus"',
-    `"${zeus ? "ok" : state.providerErrors.zeus || "sin datos"}"`,
+    csvCell(zeus ? "ok" : state.providerErrors.zeus || "sin datos"),
     '"Usuarios"',
-    `"${zeus?.analytics?.summary?.uniqueUsers ?? "-"}"`,
+    csvCell(zeus?.analytics?.summary?.uniqueUsers ?? "-"),
     '"Monto"',
-    `"${zeus ? formatCurrency(zeus.analytics.summary.totalAmount) : "-"}"`
+    csvCell(zeus ? formatCurrency(zeus.analytics.summary.totalAmount) : "-")
   ].join(";"));
 
   downloadTextFile(`overview-panels-${todayIsoDate()}.csv`, `\uFEFF${lines.join("\n")}`, "text/csv;charset=utf-8");
@@ -1743,14 +1760,14 @@ function exportZonaCsv() {
   ].forEach(([section, items]) => {
     items.forEach((item) => {
       lines.push([
-        `"${section}"`,
-        `"${item.username}"`,
-        `"${item.officeLabel || ""}"`,
-        `"${(item.phoneLabels || []).join(", ")}"`,
-        `"${formatCurrency(item.averageAmount)}"`,
-        `"${item.loadsCount}"`,
-        `"${item.lastLoadAtDisplay}"`,
-        `"${item.daysSinceLastLoad}"`
+        csvCell(section),
+        csvCell(item.username),
+        csvCell(item.officeLabel || ""),
+        csvCell((item.phoneLabels || []).join(", ")),
+        csvCell(formatCurrency(item.averageAmount)),
+        csvCell(item.loadsCount),
+        csvCell(item.lastLoadAtDisplay),
+        csvCell(item.daysSinceLastLoad)
       ].join(";"));
     });
   });
@@ -1761,14 +1778,14 @@ function exportZonaCsv() {
   [["Semana", view.weekRanking], ["Mes", view.monthRanking]].forEach(([section, items]) => {
     items.forEach((item) => {
       lines.push([
-        `"${section}"`,
-        `"${item.rank}"`,
-        `"${item.username}"`,
-        `"${item.officeLabel || ""}"`,
-        `"${(item.phoneLabels || []).join(", ")}"`,
-        `"${formatCurrency(item.totalAmount)}"`,
-        `"${item.loadsCount}"`,
-        `"${item.lastLoadAtDisplay}"`
+        csvCell(section),
+        csvCell(item.rank),
+        csvCell(item.username),
+        csvCell(item.officeLabel || ""),
+        csvCell((item.phoneLabels || []).join(", ")),
+        csvCell(formatCurrency(item.totalAmount)),
+        csvCell(item.loadsCount),
+        csvCell(item.lastLoadAtDisplay)
       ].join(";"));
     });
   });
@@ -1793,14 +1810,14 @@ function exportZeusCsv() {
   ].forEach(([section, items]) => {
     items.forEach((item) => {
       lines.push([
-        `"${section}"`,
-        `"${item.username}"`,
-        `"${item.officeLabel || ""}"`,
-        `"${(item.phoneLabels || []).join(", ")}"`,
-        `"${formatCurrency(item.averageAmount)}"`,
-        `"${item.loadsCount}"`,
-        `"${item.lastLoadAtDisplay}"`,
-        `"${item.daysSinceLastLoad}"`
+        csvCell(section),
+        csvCell(item.username),
+        csvCell(item.officeLabel || ""),
+        csvCell((item.phoneLabels || []).join(", ")),
+        csvCell(formatCurrency(item.averageAmount)),
+        csvCell(item.loadsCount),
+        csvCell(item.lastLoadAtDisplay),
+        csvCell(item.daysSinceLastLoad)
       ].join(";"));
     });
   });
@@ -1811,14 +1828,14 @@ function exportZeusCsv() {
   [["Semana", view.weekRanking], ["Mes", view.monthRanking]].forEach(([section, items]) => {
     items.forEach((item) => {
       lines.push([
-        `"${section}"`,
-        `"${item.rank}"`,
-        `"${item.username}"`,
-        `"${item.officeLabel || ""}"`,
-        `"${(item.phoneLabels || []).join(", ")}"`,
-        `"${formatCurrency(item.totalAmount)}"`,
-        `"${item.loadsCount}"`,
-        `"${item.lastLoadAtDisplay}"`
+        csvCell(section),
+        csvCell(item.rank),
+        csvCell(item.username),
+        csvCell(item.officeLabel || ""),
+        csvCell((item.phoneLabels || []).join(", ")),
+        csvCell(formatCurrency(item.totalAmount)),
+        csvCell(item.loadsCount),
+        csvCell(item.lastLoadAtDisplay)
       ].join(";"));
     });
   });
