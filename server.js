@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { createServer } from "node:http";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -17,6 +17,8 @@ const maxLookbackDays = 60;
 const periodKeys = ["morning", "afternoon", "night", "overnight"];
 const defaultZonaBaseUrl = "https://admin.zonaepic.vip";
 const defaultZeusBaseUrl = "https://admin.casinozeus.tech";
+let contactsDirectoryCache = null;
+let contactsDirectoryCacheStamp = "";
 
 function requireEnv(name) {
   const value = process.env[name];
@@ -499,6 +501,32 @@ function parseVCardEntries(rawContent) {
 async function loadContactsDirectory() {
   try {
     const officeEntries = await readdir(contactsDir, { withFileTypes: true });
+    const cacheParts = [];
+
+    for (const officeEntry of officeEntries) {
+      if (!officeEntry.isDirectory()) {
+        continue;
+      }
+
+      const officePath = path.join(contactsDir, officeEntry.name);
+      const fileEntries = await readdir(officePath, { withFileTypes: true });
+
+      for (const fileEntry of fileEntries) {
+        if (!fileEntry.isFile() || path.extname(fileEntry.name).toLowerCase() !== ".vcf") {
+          continue;
+        }
+
+        const filePath = path.join(officePath, fileEntry.name);
+        const fileStats = await stat(filePath);
+        cacheParts.push(`${filePath}:${fileStats.size}:${fileStats.mtimeMs}`);
+      }
+    }
+
+    const cacheStamp = cacheParts.sort().join("|");
+    if (contactsDirectoryCache && contactsDirectoryCacheStamp === cacheStamp) {
+      return contactsDirectoryCache;
+    }
+
     const offices = {};
 
     for (const officeEntry of officeEntries) {
@@ -542,7 +570,9 @@ async function loadContactsDirectory() {
       };
     }
 
-    return { offices };
+    contactsDirectoryCache = { offices };
+    contactsDirectoryCacheStamp = cacheStamp;
+    return contactsDirectoryCache;
   } catch {
     return { offices: {} };
   }
@@ -981,6 +1011,14 @@ function formatDateTime(date) {
   }).format(date);
 }
 
+function buildSearchText(...parts) {
+  return parts
+    .flat()
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
 function toInputDateValue(date) {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 }
@@ -1250,6 +1288,7 @@ function buildZeusTopRanking(loads, days, userLookup) {
     .map((user, index) => ({
       ...(userLookup.get(user.username) || {}),
       rank: index + 1,
+      providerKey: "zeus",
       username: user.username,
       totalAmount: user.totalAmount,
       loadsCount: user.loadsCount,
@@ -1258,7 +1297,15 @@ function buildZeusTopRanking(loads, days, userLookup) {
       metricLoads: user.loadsCount,
       metricDate: user.lastLoadAt.getTime(),
       officeLabel: (userLookup.get(user.username) || {}).officeLabel || getBestOfficeLabel(user.officeCounts),
-      phoneLabels: (userLookup.get(user.username) || {}).phoneLabels || []
+      phoneLabels: (userLookup.get(user.username) || {}).phoneLabels || [],
+      searchText: buildSearchText(
+        user.username,
+        formatDateTime(user.lastLoadAt),
+        user.totalAmount,
+        user.loadsCount,
+        (userLookup.get(user.username) || {}).officeLabel || getBestOfficeLabel(user.officeCounts),
+        (userLookup.get(user.username) || {}).phoneLabels || []
+      )
     }));
 }
 
@@ -1354,10 +1401,20 @@ function buildZeusAnalytics(transfers, contactsDirectory) {
         preferredPeriod,
         preferredAmountBucket: averageAmount >= 30000 ? "large" : averageAmount >= 10000 ? "medium" : averageAmount >= 3000 ? "small" : "other",
         daysSinceLastLoad,
-        inactivityBucket,
-        officeLabel,
+      inactivityBucket,
+      providerKey: "zeus",
+      officeLabel,
         officeKey: normalizeContactSearchText(officeLabel),
         phoneLabels,
+        searchText: buildSearchText(
+          user.username,
+          formatDateTime(user.lastLoadDate),
+          averageAmount,
+          user.loadsCount,
+          user.totalAmount,
+          officeLabel,
+          phoneLabels
+        ),
         metricAmount: averageAmount,
         metricLoads: user.loadsCount,
         metricDate: user.lastLoadDate.getTime()
