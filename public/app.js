@@ -5,6 +5,8 @@ const dbVersion = 2;
 const timeZone = "America/Argentina/Buenos_Aires";
 const maxLookbackDaysFallback = 60;
 const periodKeys = ["morning", "afternoon", "night", "overnight"];
+const searchDebounceMs = 180;
+const panelInputDebounceMs = 180;
 
 const elements = {
   topbarKicker: document.querySelector("#topbarKicker"),
@@ -189,7 +191,13 @@ const state = {
     zeus: null
   },
   contactedUsers: {},
-  contactMatchCache: new Map()
+  contactMatchCache: new Map(),
+  searchTimer: null,
+  panelInputTimers: {},
+  officeFilterOptionCache: {
+    zonaEpic: "",
+    zeus: ""
+  }
 };
 
 let dbPromise;
@@ -363,6 +371,14 @@ function downloadTextFile(filename, content, mimeType = "text/plain;charset=utf-
   anchor.click();
   document.body.removeChild(anchor);
   URL.revokeObjectURL(url);
+}
+
+function debounce(key, delay, callback) {
+  clearTimeout(state.panelInputTimers[key]);
+  state.panelInputTimers[key] = window.setTimeout(() => {
+    delete state.panelInputTimers[key];
+    callback();
+  }, delay);
 }
 
 function getAmountBucket(amount) {
@@ -664,6 +680,14 @@ function getMatchedContactsForUsername(username) {
   return bestMatch;
 }
 
+function buildItemSearchText(...parts) {
+  return parts
+    .flat()
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
 function buildZonaTopRanking(rows, days) {
   const now = new Date();
   const cutoff = new Date(now);
@@ -717,6 +741,14 @@ function buildZonaTopRanking(rows, days) {
         officeKey: contactsMatch.officeKey,
         phoneLabels: contactsMatch.phoneLabels,
         providerKey: "zonaEpic",
+        searchText: buildItemSearchText(
+          user.username,
+          formatDateTime(user.lastLoadAt),
+          user.totalAmount,
+          user.loadsCount,
+          contactsMatch.officeLabel,
+          contactsMatch.phoneLabels
+        ),
         metricAmount: user.totalAmount,
         metricLoads: user.loadsCount,
         metricDate: user.lastLoadAt.getTime()
@@ -783,6 +815,15 @@ function buildZonaAnalytics(rows) {
       officeKey: contactsMatch.officeKey,
       phoneLabels: contactsMatch.phoneLabels,
       providerKey: "zonaEpic",
+      searchText: buildItemSearchText(
+        user.username,
+        formatDateTime(user.lastLoadDate),
+        averageAmount,
+        user.loadsCount,
+        user.totalAmount,
+        contactsMatch.officeLabel,
+        contactsMatch.phoneLabels
+      ),
       metricAmount: averageAmount,
       metricLoads: user.loadsCount,
       metricDate: user.lastLoadDate.getTime()
@@ -868,7 +909,7 @@ async function syncZonaBrowserCache(runtimeConfig) {
   if (current < requestedFrom) {
     current = requestedFrom;
   }
-  const finalDay = todayIsoDate();
+  const finalDay = requestedTo;
   let steps = 0;
   let totalDays = 0;
 
@@ -1072,12 +1113,7 @@ function applyZonaSearch(items) {
     return items;
   }
 
-  return items.filter((item) =>
-    [item.username, item.lastLoadAtDisplay, item.averageAmount, item.loadsCount]
-      .join(" ")
-      .toLowerCase()
-      .includes(state.searchQuery)
-  );
+  return items.filter((item) => item.searchText?.includes(state.searchQuery));
 }
 
 function applyZonaFilters(users) {
@@ -1167,10 +1203,6 @@ function renderList(element, items, itemRenderer, emptyMessage) {
   }
 
   element.innerHTML = items.map(itemRenderer).join("");
-}
-
-function withProviderKey(items, providerKey) {
-  return items.map((item) => ({ ...item, providerKey }));
 }
 
 function renderZonaView() {
@@ -1270,11 +1302,11 @@ function renderZonaView() {
   elements.zona.activeFilterLabel.textContent =
     `Mostrando ${filteredUsers.length} de ${payload.analytics.summary.uniqueUsers} usuarios para ${officeLabel}, ${getZonaPeriodLabel(state.zonaFilters.period)} y ${getZonaAmountLabel(state.zonaFilters.amount)}.${searchNote}`;
 
-  renderList(elements.zona.listFive, withProviderKey(five, "zonaEpic"), renderZonaUserCard, "No hay usuarios para este filtro.");
-  renderList(elements.zona.listTen, withProviderKey(ten, "zonaEpic"), renderZonaUserCard, "No hay usuarios para este filtro.");
-  renderList(elements.zona.listFifteen, withProviderKey(fifteen, "zonaEpic"), renderZonaUserCard, "No hay usuarios para este filtro.");
-  renderList(elements.zona.weekRanking, withProviderKey(weekRanking, "zonaEpic"), renderZonaRankingItem, "No hay jugadores para este ranking.");
-  renderList(elements.zona.monthRanking, withProviderKey(monthRanking, "zonaEpic"), renderZonaRankingItem, "No hay jugadores para este ranking.");
+  renderList(elements.zona.listFive, five, renderZonaUserCard, "No hay usuarios para este filtro.");
+  renderList(elements.zona.listTen, ten, renderZonaUserCard, "No hay usuarios para este filtro.");
+  renderList(elements.zona.listFifteen, fifteen, renderZonaUserCard, "No hay usuarios para este filtro.");
+  renderList(elements.zona.weekRanking, weekRanking, renderZonaRankingItem, "No hay jugadores para este ranking.");
+  renderList(elements.zona.monthRanking, monthRanking, renderZonaRankingItem, "No hay jugadores para este ranking.");
 
   state.currentViews.zonaEpic = {
     filteredUsers,
@@ -1317,12 +1349,19 @@ function syncOfficeFilterOptions(select, offices, selectedValue) {
   }
 
   const normalizedOffices = Array.isArray(offices) ? offices : [];
-  select.innerHTML = [
+  const optionsMarkup = [
     '<option value="all">Todas las oficinas</option>',
     ...normalizedOffices.map(
       (office) => `<option value="${escapeHtml(office.key)}">${escapeHtml(office.label)} (${office.count})</option>`
     )
   ].join("");
+  const cacheKey = select === elements.zona.officeFilter ? "zonaEpic" : "zeus";
+
+  if (state.officeFilterOptionCache[cacheKey] !== optionsMarkup) {
+    select.innerHTML = optionsMarkup;
+    state.officeFilterOptionCache[cacheKey] = optionsMarkup;
+  }
+
   select.value = normalizedOffices.some((office) => office.key === selectedValue) ? selectedValue : "all";
 }
 
@@ -1344,20 +1383,7 @@ function applyZeusSearch(items) {
     return items;
   }
 
-  return items.filter((item) =>
-    [
-      item.username,
-      item.lastLoadAtDisplay,
-      item.averageAmount,
-      item.loadsCount,
-      item.totalAmount,
-      item.officeLabel,
-      (item.phoneLabels || []).join(" ")
-    ]
-      .join(" ")
-      .toLowerCase()
-      .includes(state.searchQuery)
-  );
+  return items.filter((item) => item.searchText?.includes(state.searchQuery));
 }
 
 function renderZeusView() {
@@ -1453,11 +1479,11 @@ function renderZeusView() {
   elements.zeus.activeFilterLabel.textContent =
     `Mostrando ${filteredUsers.length} de ${payload.analytics.summary.uniqueUsers} usuarios para ${officeLabel}, ${getZonaPeriodLabel(state.zeusFilters.period)} y ${getZonaAmountLabel(state.zeusFilters.amount)}.${searchNote}`;
 
-  renderList(elements.zeus.listFive, withProviderKey(five, "zeus"), renderZonaUserCard, "No hay usuarios para este filtro.");
-  renderList(elements.zeus.listTen, withProviderKey(ten, "zeus"), renderZonaUserCard, "No hay usuarios para este filtro.");
-  renderList(elements.zeus.listFifteen, withProviderKey(fifteen, "zeus"), renderZonaUserCard, "No hay usuarios para este filtro.");
-  renderList(elements.zeus.weekRanking, withProviderKey(weekRanking, "zeus"), renderZonaRankingItem, "No hay jugadores para este ranking.");
-  renderList(elements.zeus.monthRanking, withProviderKey(monthRanking, "zeus"), renderZonaRankingItem, "No hay jugadores para este ranking.");
+  renderList(elements.zeus.listFive, five, renderZonaUserCard, "No hay usuarios para este filtro.");
+  renderList(elements.zeus.listTen, ten, renderZonaUserCard, "No hay usuarios para este filtro.");
+  renderList(elements.zeus.listFifteen, fifteen, renderZonaUserCard, "No hay usuarios para este filtro.");
+  renderList(elements.zeus.weekRanking, weekRanking, renderZonaRankingItem, "No hay jugadores para este ranking.");
+  renderList(elements.zeus.monthRanking, monthRanking, renderZonaRankingItem, "No hay jugadores para este ranking.");
 
   state.currentViews.zeus = {
     filteredUsers,
@@ -1593,6 +1619,25 @@ function renderOverview() {
   }
 }
 
+function renderActiveTabContent() {
+  if (state.activeTab === "overview") {
+    renderOverview();
+    return;
+  }
+
+  if (state.activeTab === "zonaEpic") {
+    renderZonaView();
+    return;
+  }
+
+  if (state.activeTab === "zeus") {
+    renderZeusView();
+    return;
+  }
+
+  renderSettings();
+}
+
 function renderSettings() {
   const focusedElement = document.activeElement;
   if (state.activeTab === "settings" && focusedElement && focusedElement.closest("#settingsView")) {
@@ -1608,10 +1653,7 @@ function renderSettings() {
 }
 
 function renderAll() {
-  renderOverview();
-  renderZonaView();
-  renderZeusView();
-  renderSettings();
+  renderActiveTabContent();
 }
 
 function setActiveTab(tabKey) {
@@ -1833,7 +1875,7 @@ function resetProviderTimer(providerKey) {
   clearInterval(state.syncTimers[providerKey]);
   const interval = Number(state.config[providerKey].interval);
 
-  if (!interval || Number.isNaN(interval)) {
+  if (!interval || Number.isNaN(interval) || document.hidden) {
     return;
   }
 
@@ -1845,6 +1887,25 @@ function resetProviderTimer(providerKey) {
 
     syncZeus();
   }, interval);
+}
+
+function refreshProviderTimers() {
+  resetProviderTimer("zonaEpic");
+  resetProviderTimer("zeus");
+}
+
+function setupVisibilityHandling() {
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      clearInterval(state.syncTimers.zonaEpic);
+      clearInterval(state.syncTimers.zeus);
+      state.syncTimers.zonaEpic = null;
+      state.syncTimers.zeus = null;
+      return;
+    }
+
+    refreshProviderTimers();
+  });
 }
 
 async function hydrateConfig() {
@@ -1975,6 +2036,14 @@ function setupPanelTools(providerKey, panels) {
   panels.forEach((panel) => {
     const panelKey = providerKey === "zonaEpic" ? panel.dataset.zonaPanel : panel.dataset.zeusPanel;
     panel.querySelectorAll("select, input").forEach((control) => {
+      const rerender = () => {
+        if (providerKey === "zonaEpic") {
+          renderZonaView();
+        } else {
+          renderZeusView();
+        }
+      };
+
       control.addEventListener("change", () => {
         const role = control.dataset.role;
         const toolState = state.panelState[providerKey][panelKey];
@@ -1989,22 +2058,13 @@ function setupPanelTools(providerKey, panels) {
         } else if (role === "sort-direction") {
           toolState.sortDirection = control.value;
         }
-
-        if (providerKey === "zonaEpic") {
-          renderZonaView();
-        } else {
-          renderZeusView();
-        }
+        rerender();
       });
 
       if (control.tagName === "INPUT") {
         control.addEventListener("input", () => {
           state.panelState[providerKey][panelKey].filterValue = control.value.trim();
-          if (providerKey === "zonaEpic") {
-            renderZonaView();
-          } else {
-            renderZeusView();
-          }
+          debounce(`${providerKey}:${panelKey}`, panelInputDebounceMs, rerender);
         });
       }
     });
@@ -2013,18 +2073,11 @@ function setupPanelTools(providerKey, panels) {
 
 function setupSearch() {
   elements.searchInput.addEventListener("input", () => {
-    state.searchQuery = normalizeSearchQuery(elements.searchInput.value);
-    if (state.activeTab === "overview") {
-      renderOverview();
-      return;
-    }
-    if (state.activeTab === "zonaEpic") {
-      renderZonaView();
-      return;
-    }
-    if (state.activeTab === "zeus") {
-      renderZeusView();
-    }
+    clearTimeout(state.searchTimer);
+    state.searchTimer = window.setTimeout(() => {
+      state.searchQuery = normalizeSearchQuery(elements.searchInput.value);
+      renderActiveTabContent();
+    }, searchDebounceMs);
   });
 }
 
@@ -2157,6 +2210,7 @@ async function bootstrap() {
   setupSearch();
   setupSettings();
   setupProviderControls();
+  setupVisibilityHandling();
   setupZonaFilters();
   setupZeusFilters();
   setupPanelTools("zonaEpic", elements.zona.toolPanels);
@@ -2165,8 +2219,7 @@ async function bootstrap() {
   setupContactedHandlers();
   setActiveTab("overview");
   renderAll();
-  resetProviderTimer("zonaEpic");
-  resetProviderTimer("zeus");
+  refreshProviderTimers();
   await syncAllProviders();
 }
 
