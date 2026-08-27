@@ -75,6 +75,7 @@ const elements = {
     lastSyncDuplicate: document.querySelector("#zeusLastSyncDuplicate"),
     activeFilterLabel: document.querySelector("#zeusActiveFilterLabel"),
     officeFilter: document.querySelector("#zeusOfficeFilter"),
+    hasBalanceFilter: document.querySelector("#zeusHasBalanceFilter"),
     countFive: document.querySelector("#zeusCountFive"),
     countTen: document.querySelector("#zeusCountTen"),
     countFifteen: document.querySelector("#zeusCountFifteen"),
@@ -170,7 +171,8 @@ const state = {
   zeusFilters: {
     office: "all",
     period: "all",
-    amount: "all"
+    amount: "all",
+    hasBalance: false
   },
   panelState: {
     zonaEpic: {
@@ -1432,7 +1434,9 @@ function applyZeusFilters(users) {
     const byAmount =
       state.zeusFilters.amount === "all" ||
       user.preferredAmountBucket === state.zeusFilters.amount;
-    return byOffice && byPeriod && byAmount;
+    const byBalance =
+      !state.zeusFilters.hasBalance || (user.currentBalance !== null && user.currentBalance > 0);
+    return byOffice && byPeriod && byAmount && byBalance;
   });
 }
 
@@ -1455,6 +1459,7 @@ function renderZeusView() {
   elements.zeus.filterFrom.value = state.config.zeus.filterFrom;
   elements.zeus.filterTo.value = state.config.zeus.filterTo;
   elements.zeus.interval.value = String(state.config.zeus.interval);
+  elements.zeus.hasBalanceFilter.checked = state.zeusFilters.hasBalance;
   syncOfficeFilterOptions(elements.zeus.officeFilter, payload?.analytics?.offices, state.zeusFilters.office);
 
   if (state.syncing.zeus) {
@@ -1843,7 +1848,7 @@ function exportZeusCsv() {
   }
 
   const lines = [];
-  lines.push(['"Seccion"', '"Usuario"', '"Oficina"', '"Telefonos"', '"Promedio"', '"Cantidad cargas"', '"Ultima carga"', '"Dias inactivo"'].join(";"));
+  lines.push(['"Seccion"', '"Usuario"', '"Oficina"', '"Telefonos"', '"Promedio"', '"Cantidad cargas"', '"Ultima carga"', '"Dias inactivo"', '"Saldo actual"'].join(";"));
 
   [
     ["10 a 30 dias", view.five],
@@ -1859,7 +1864,8 @@ function exportZeusCsv() {
         csvCell(formatCurrency(item.averageAmount)),
         csvCell(item.loadsCount),
         csvCell(item.lastLoadAtDisplay),
-        csvCell(item.daysSinceLastLoad)
+        csvCell(item.daysSinceLastLoad),
+        csvCell(item.currentBalance !== null && item.currentBalance !== undefined ? formatCurrency(item.currentBalance) : "")
       ].join(";"));
     });
   });
@@ -2093,6 +2099,11 @@ function setupZeusFilters() {
       );
       renderZeusView();
     });
+  });
+
+  elements.zeus.hasBalanceFilter.addEventListener("change", () => {
+    state.zeusFilters.hasBalance = elements.zeus.hasBalanceFilter.checked;
+    renderZeusView();
   });
 }
 

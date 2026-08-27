@@ -89,6 +89,7 @@ function getZeusRequestConfig(overrides = {}) {
     password,
     authUrl: `${baseUrl}/api/backoffice/v1/auth/signin`,
     profileUrl: `${baseUrl}/api/backoffice/v1/users/me`,
+    usersUrl: `${baseUrl}/api/backoffice/v1/users`,
     transactionsUrl: `${baseUrl}/api/backoffice/v1/project/account-transactions`,
     totalAmountUrl: `${baseUrl}/api/backoffice/v1/project/account-transactions/total-amount`,
     playerTransfersUrl: `${baseUrl}/api/backoffice/v1/account-transfers/player`,
@@ -273,6 +274,49 @@ async function fetchZeusJson(url, accessToken, searchParams = null) {
   }
 
   return payload;
+}
+
+async function fetchAllZeusPlayerBalances({ config, accessToken, pageSize = 100, maxUsers }) {
+  const balances = {};
+  let offset = 0;
+  let count = Infinity;
+  const effectiveMaxUsers = Number(maxUsers || process.env.ZEUS_MAX_USERS || 20000);
+
+  while (offset < count && offset < effectiveMaxUsers) {
+    const payload = await fetchZeusJson(config.usersUrl, accessToken, {
+      "roles[]": ["player"],
+      includeAccounts: true,
+      offset,
+      limit: pageSize,
+      direct: true,
+      order: "DESC",
+      sortField: "created_at",
+      "statuses[]": ["ACTIVE"]
+    });
+
+    const items = Array.isArray(payload?.items) ? payload.items : [];
+    count = Number(payload?.count ?? items.length);
+
+    for (const item of items) {
+      const username = String(item?.username || "").trim();
+
+      if (!username) {
+        continue;
+      }
+
+      const account =
+        (item.accounts || []).find((entry) => entry.currency === "ARS") || item.accounts?.[0];
+      balances[username] = account ? Number(account.amount) : 0;
+    }
+
+    if (!items.length || items.length < pageSize) {
+      break;
+    }
+
+    offset += pageSize;
+  }
+
+  return balances;
 }
 
 function toZeusIsoRange(fromDate, toDateExclusive) {
@@ -1346,7 +1390,7 @@ function buildZeusTopRanking(loads, days, userLookup) {
     }));
 }
 
-function buildZeusAnalytics(transfers, contactsDirectory) {
+function buildZeusAnalytics(transfers, contactsDirectory, balances = {}) {
   const usersMap = new Map();
   const now = new Date();
   const normalizedTransfers = transfers
@@ -1427,6 +1471,9 @@ function buildZeusAnalytics(transfers, contactsDirectory) {
       const inactivityBucket = getInactivityBucket(daysSinceLastLoad);
       const officeLabel = getBestOfficeLabel(user.officeCounts);
       const phoneLabels = getMatchedPhoneLabels(contactsDirectory, officeLabel, user.username);
+      const currentBalance = Object.prototype.hasOwnProperty.call(balances, user.username)
+        ? balances[user.username]
+        : null;
 
       return {
         username: user.username,
@@ -1439,6 +1486,7 @@ function buildZeusAnalytics(transfers, contactsDirectory) {
         preferredAmountBucket: averageAmount >= 30000 ? "large" : averageAmount >= 10000 ? "medium" : averageAmount >= 3000 ? "small" : "other",
         daysSinceLastLoad,
       inactivityBucket,
+      currentBalance,
       providerKey: "zeus",
       officeLabel,
         officeKey: normalizeContactSearchText(officeLabel),
@@ -1757,7 +1805,7 @@ async function handleApiZeusSnapshot(requestUrl, response) {
       throw new Error("No pude obtener el agentUserId de Zeus.");
     }
 
-    const [contactsDirectory, transfersPayload, statsPayload] = await Promise.all([
+    const [contactsDirectory, transfersPayload, statsPayload, balances] = await Promise.all([
       loadContactsDirectory(),
       fetchAllZeusPlayerTransfers({
         config,
@@ -1771,9 +1819,10 @@ async function handleApiZeusSnapshot(requestUrl, response) {
         agentUserId,
         ...toZeusIsoRange(safeRange.from, safeRange.toExclusive),
         "operations[]": ["INCOME", "OUTCOME"]
-      }).catch(() => null)
+      }).catch(() => null),
+      fetchAllZeusPlayerBalances({ config, accessToken: auth.accessToken }).catch(() => ({}))
     ]);
-    const analytics = buildZeusAnalytics(transfersPayload.rows, contactsDirectory);
+    const analytics = buildZeusAnalytics(transfersPayload.rows, contactsDirectory, balances);
 
     sendJson(response, 200, {
       meta: {
