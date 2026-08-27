@@ -860,6 +860,10 @@ a {
   font-weight: 700;
 }
 
+.userCard dd.balancePositive {
+  color: var(--success);
+}
+
 .meta,
 .rankingMeta,
 .zeusCardMeta,

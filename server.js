@@ -58,6 +58,7 @@ function getRequestConfig(overrides = {}) {
     baseUrl,
     reportPageUrl: `${baseUrl}/report_balances.php`,
     reportApiUrl: `${baseUrl}/services/report_get_balances_history.php`,
+    usersListUrl: `${baseUrl}/services/operation_get_users_list.php`,
     sessionId,
     token
   };
@@ -694,6 +695,87 @@ async function fetchAllBalances({
     recordsFiltered,
     truncated: rows.length >= effectiveMaxRows && recordsFiltered > rows.length
   };
+}
+
+function buildUsersListFormPayload({ token, start, length, username }) {
+  const form = new URLSearchParams();
+  form.set("draw", "1");
+
+  for (let index = 0; index <= 6; index += 1) {
+    form.set(`columns[${index}][data]`, String(index));
+    form.set(`columns[${index}][name]`, "");
+    form.set(`columns[${index}][searchable]`, "true");
+    form.set(`columns[${index}][orderable]`, "false");
+    form.set(`columns[${index}][search][value]`, "");
+    form.set(`columns[${index}][search][regex]`, "false");
+  }
+
+  form.set("start", String(start || 0));
+  form.set("length", String(length));
+  form.set("search[value]", "");
+  form.set("search[regex]", "false");
+  form.set("section", "all");
+  form.set("username", username || "");
+  form.set("affiliates_index", "-1");
+  form.set("token", token);
+
+  return form;
+}
+
+async function fetchUsersListPage({ config, token, start, length }) {
+  const form = buildUsersListFormPayload({ token, start, length });
+
+  const response = await fetch(config.usersListUrl, {
+    method: "POST",
+    headers: {
+      Accept: "application/json, text/javascript, */*; q=0.01",
+      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+      Cookie: `PHPSESSID=${config.sessionId}`,
+      Origin: config.baseUrl,
+      Referer: `${config.baseUrl}/users.php`,
+      "User-Agent": "Mozilla/5.0",
+      "X-Requested-With": "XMLHttpRequest"
+    },
+    body: form.toString()
+  });
+
+  if (!response.ok) {
+    throw new Error(`ZonaEpic devolvio ${response.status} al consultar el listado de usuarios`);
+  }
+
+  return response.json();
+}
+
+async function fetchAllZonaUserBalances({ config, token, pageSize = 100, maxRows }) {
+  const balances = {};
+  let start = 0;
+  let recordsTotal = Infinity;
+  const effectiveMaxRows = Number(maxRows || process.env.ZONAEPIC_MAX_USERS || 20000);
+
+  while (start < recordsTotal && start < effectiveMaxRows) {
+    const payload = await fetchUsersListPage({ config, token, start, length: pageSize });
+    const rows = Array.isArray(payload.data) ? payload.data : [];
+    recordsTotal = Number(payload.recordsTotal || rows.length);
+
+    for (const row of rows) {
+      const username = String(row?.[0] || "").trim();
+      const role = String(row?.[6] || "").toLowerCase();
+
+      if (!username || role !== "player") {
+        continue;
+      }
+
+      balances[username] = normalizeNumber(row[1]);
+    }
+
+    if (!rows.length || rows.length < pageSize) {
+      break;
+    }
+
+    start += pageSize;
+  }
+
+  return balances;
 }
 
 function parseLoadDate(rawValue) {
@@ -1526,6 +1608,30 @@ async function handleApiLoads(requestUrl, response) {
   }
 }
 
+async function handleApiZonaBalances(requestUrl, response) {
+  try {
+    const body = requestUrl.body || {};
+    const config = getRequestConfig({
+      baseUrl: body.baseUrl,
+      sessionId: body.sessionId,
+      token: body.token
+    });
+    const token = await getSessionToken(config);
+    const balances = await fetchAllZonaUserBalances({ config, token });
+
+    sendJson(response, 200, {
+      meta: {
+        fetchedAt: new Date().toISOString(),
+        baseUrl: config.baseUrl,
+        count: Object.keys(balances).length
+      },
+      balances
+    });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message });
+  }
+}
+
 async function handleApiWindow(requestUrl, response) {
   try {
     const body = requestUrl.body || {};
@@ -1759,6 +1865,7 @@ export async function handleRequest(request, response) {
     requestUrl.pathname === "/api/window" ||
     requestUrl.pathname === "/api/zonaepic/loads" ||
     requestUrl.pathname === "/api/zonaepic/window" ||
+    requestUrl.pathname === "/api/zonaepic/balances" ||
     requestUrl.pathname === "/api/zeus/snapshot"
   ) {
     if (request.method === "POST") {
@@ -1771,6 +1878,10 @@ export async function handleRequest(request, response) {
     }
     if (requestUrl.pathname === "/api/window" || requestUrl.pathname === "/api/zonaepic/window") {
       await handleApiWindow(requestUrl, response);
+      return;
+    }
+    if (requestUrl.pathname === "/api/zonaepic/balances") {
+      await handleApiZonaBalances(requestUrl, response);
       return;
     }
     if (requestUrl.pathname === "/api/zeus/snapshot") {

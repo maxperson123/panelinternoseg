@@ -44,6 +44,7 @@ const elements = {
     lastSyncDuplicate: document.querySelector("#zonaLastSyncDuplicate"),
     activeFilterLabel: document.querySelector("#zonaActiveFilterLabel"),
     officeFilter: document.querySelector("#zonaOfficeFilter"),
+    hasBalanceFilter: document.querySelector("#zonaHasBalanceFilter"),
     countFive: document.querySelector("#zonaCountFive"),
     countTen: document.querySelector("#zonaCountTen"),
     countFifteen: document.querySelector("#zonaCountFifteen"),
@@ -163,7 +164,8 @@ const state = {
   zonaFilters: {
     office: "all",
     period: "all",
-    amount: "all"
+    amount: "all",
+    hasBalance: false
   },
   zeusFilters: {
     office: "all",
@@ -773,7 +775,7 @@ function buildZonaTopRanking(rows, days) {
     });
 }
 
-function buildZonaAnalytics(rows) {
+function buildZonaAnalytics(rows, balances = {}) {
   const usersMap = new Map();
   const now = new Date();
   const loadRows = rows.filter((row) => normalizeZonaAmount(row[4]) > 0);
@@ -816,6 +818,9 @@ function buildZonaAnalytics(rows) {
     const averageAmount = user.loadsCount ? user.totalAmount / user.loadsCount : 0;
     const daysSinceLastLoad = daysBetween(user.lastLoadDate, now);
     const contactsMatch = getMatchedContactsForUsername(user.username);
+    const currentBalance = Object.prototype.hasOwnProperty.call(balances, user.username)
+      ? balances[user.username]
+      : null;
 
     return {
       username: user.username,
@@ -828,6 +833,7 @@ function buildZonaAnalytics(rows) {
       preferredAmountBucket: getAmountBucket(averageAmount),
       daysSinceLastLoad,
       inactivityBucket: getInactivityBucket(daysSinceLastLoad),
+      currentBalance,
       officeLabel: contactsMatch.officeLabel,
       officeKey: contactsMatch.officeKey,
       phoneLabels: contactsMatch.phoneLabels,
@@ -899,6 +905,20 @@ async function fetchZonaWindow(runtimeConfig, windowFrom, windowTo) {
       token: runtimeConfig.token,
       windowFrom,
       windowTo
+    })
+  });
+}
+
+async function fetchZonaBalances(runtimeConfig) {
+  return fetchJson("/api/zonaepic/balances", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      baseUrl: runtimeConfig.baseUrl,
+      sessionId: runtimeConfig.sessionId,
+      token: runtimeConfig.token
     })
   });
 }
@@ -982,6 +1002,17 @@ async function syncZonaBrowserCache(runtimeConfig) {
   await putCacheMeta(finalMeta);
   const rows = await getCachedRowsInRange(cacheKey, requestedFrom, requestedTo);
 
+  let balances = {};
+  try {
+    setProviderProgress("zonaEpic", "Consultando saldos...");
+    const balancesPayload = await fetchZonaBalances(runtimeConfig);
+    balances = balancesPayload.balances || {};
+  } catch {
+    // Si falla la consulta de saldos no abortamos el sync completo: los
+    // usuarios quedan con currentBalance = null y el filtro "tiene fichas"
+    // simplemente no los muestra hasta el proximo sync exitoso.
+  }
+
   return {
     meta: {
       provider: "zonaEpic",
@@ -993,7 +1024,7 @@ async function syncZonaBrowserCache(runtimeConfig) {
       skippedRanges
     },
     rows,
-    analytics: buildZonaAnalytics(rows)
+    analytics: buildZonaAnalytics(rows, balances)
   };
 }
 
@@ -1142,7 +1173,9 @@ function applyZonaFilters(users) {
     const byAmount =
       state.zonaFilters.amount === "all" ||
       user.preferredAmountBucket === state.zonaFilters.amount;
-    return byOffice && byPeriod && byAmount;
+    const byBalance =
+      !state.zonaFilters.hasBalance || (user.currentBalance !== null && user.currentBalance > 0);
+    return byOffice && byPeriod && byAmount && byBalance;
   });
 }
 
@@ -1154,6 +1187,7 @@ function renderZonaUserCard(user) {
   ]
     .filter(Boolean)
     .join(" · ");
+  const hasBalanceData = user.currentBalance !== null && user.currentBalance !== undefined;
 
   return `
     <article class="userCard copyableCard" data-provider="${escapeHtml(providerKey)}" data-username="${escapeHtml(user.username)}">
@@ -1162,7 +1196,7 @@ function renderZonaUserCard(user) {
           ${escapeHtml(user.username)}
         </button>
         <label class="contactToggle">
-          <input type="checkbox" data-contacted-toggle="${escapeHtml(providerKey)}::${escapeHtml(user.username)}" ${isUserContacted(providerKey, user.username) ? "checked" : ""} />
+          <input type="checkbox" data-contacted-toggle="${escapeHtml(getContactedUserKey(providerKey, user.username))}" ${isUserContacted(providerKey, user.username) ? "checked" : ""} />
           <span>Contactado</span>
         </label>
         <span>${formatCurrency(user.averageAmount)}</span>
@@ -1176,6 +1210,12 @@ function renderZonaUserCard(user) {
           <dt>Cantidad de cargas</dt>
           <dd>${user.loadsCount}</dd>
         </div>
+        ${hasBalanceData ? `
+        <div>
+          <dt>Saldo actual</dt>
+          <dd class="${user.currentBalance > 0 ? "balancePositive" : ""}">${formatCurrency(user.currentBalance)}</dd>
+        </div>
+        ` : ""}
       </dl>
       <p class="meta">Última carga: ${escapeHtml(user.lastLoadAtDisplay)} · ${user.daysSinceLastLoad} días inactivo</p>
       ${ownershipMeta ? `<p class="meta">${ownershipMeta}</p>` : ""}
@@ -1199,7 +1239,7 @@ function renderZonaRankingItem(item) {
           #${item.rank} ${escapeHtml(item.username)}
         </button>
         <label class="contactToggle">
-          <input type="checkbox" data-contacted-toggle="${escapeHtml(providerKey)}::${escapeHtml(item.username)}" ${isUserContacted(providerKey, item.username) ? "checked" : ""} />
+          <input type="checkbox" data-contacted-toggle="${escapeHtml(getContactedUserKey(providerKey, item.username))}" ${isUserContacted(providerKey, item.username) ? "checked" : ""} />
           <span>Contactado</span>
         </label>
         <span>${formatCurrency(item.totalAmount)}</span>
@@ -1233,6 +1273,7 @@ function renderZonaView() {
   elements.zona.filterFrom.value = state.config.zonaEpic.filterFrom;
   elements.zona.filterTo.value = state.config.zonaEpic.filterTo;
   elements.zona.interval.value = String(state.config.zonaEpic.interval);
+  elements.zona.hasBalanceFilter.checked = state.zonaFilters.hasBalance;
   syncOfficeFilterOptions(elements.zona.officeFilter, payload?.analytics?.offices, state.zonaFilters.office);
 
   if (state.syncing.zonaEpic) {
@@ -1751,7 +1792,7 @@ function exportZonaCsv() {
   }
 
   const lines = [];
-  lines.push(['"Seccion"', '"Usuario"', '"Oficina"', '"Telefonos"', '"Promedio"', '"Cantidad cargas"', '"Ultima carga"', '"Dias inactivo"'].join(";"));
+  lines.push(['"Seccion"', '"Usuario"', '"Oficina"', '"Telefonos"', '"Promedio"', '"Cantidad cargas"', '"Ultima carga"', '"Dias inactivo"', '"Saldo actual"'].join(";"));
 
   [
     ["10 a 30 dias", view.five],
@@ -1767,7 +1808,8 @@ function exportZonaCsv() {
         csvCell(formatCurrency(item.averageAmount)),
         csvCell(item.loadsCount),
         csvCell(item.lastLoadAtDisplay),
-        csvCell(item.daysSinceLastLoad)
+        csvCell(item.daysSinceLastLoad),
+        csvCell(item.currentBalance !== null && item.currentBalance !== undefined ? formatCurrency(item.currentBalance) : "")
       ].join(";"));
     });
   });
@@ -2019,6 +2061,11 @@ function setupZonaFilters() {
       );
       renderZonaView();
     });
+  });
+
+  elements.zona.hasBalanceFilter.addEventListener("change", () => {
+    state.zonaFilters.hasBalance = elements.zona.hasBalanceFilter.checked;
+    renderZonaView();
   });
 }
 
