@@ -132,20 +132,6 @@ npm run dev
 
 Levanta el servidor con `--watch`.
 
-## Deploy
-
-Actualmente está desplegado en Vercel.
-
-Importante:
-
-- `ZonaEpic` puede funcionar en Vercel dependiendo de la sesión cargada
-- `Zeus` hoy puede autenticar bien en local pero ser bloqueado con `403` desde Vercel por IP/origen
-
-Por eso, si `Zeus` falla en producción pero anda local:
-
-- no suele ser problema de credenciales
-- suele ser bloqueo del origen de la request
-
 ## Exportación
 
 La app exporta CSV según la solapa activa:
