@@ -27,6 +27,7 @@ Con esos datos arma:
 - cargas y monto filtrado
 - listas de inactividad
 - top 100 semanal y mensual
+- saldo actual por jugador (`services/operation_get_users_list.php`, mismo `session_token`)
 
 Importante:
 
@@ -55,7 +56,8 @@ Con esos datos arma:
 
 - movimientos del panel madre
 - ingresos y egresos
-- balance actual
+- balance actual (de la cuenta madre)
+- saldo actual por jugador (`api/backoffice/v1/users?roles[]=player&includeAccounts=true`)
 - ranking de días con más ingresos
 
 ## Estructura de la app
@@ -72,6 +74,11 @@ La interfaz está dividida en 4 secciones:
 4. `Settings`
    - credenciales de ambos paneles
    - se guardan en el navegador
+
+## Filtros y seguimiento
+
+- Filtro `Tiene fichas (saldo > 0)` en ZonaEpic y Zeus, combinable con oficina/franja horaria/monto. Como las listas de usuarios ya vienen ordenadas por días de inactividad, combinado con este filtro permite detectar directamente jugadores inactivos que todavía tienen saldo disponible.
+- Cada usuario tiene un checkbox `Contactado` que persiste en el navegador (`localStorage`) entre sincronizaciones. Es por navegador: no se comparte entre distintas PCs.
 
 ## Instalación local
 
