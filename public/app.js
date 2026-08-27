@@ -365,13 +365,8 @@ function copyToClipboard(text) {
   return Promise.resolve();
 }
 
-// Builds a safe, quoted CSV cell from arbitrary (possibly external) data:
-// - Escapes embedded double quotes by doubling them (RFC 4180).
-// - Neutralizes spreadsheet formula injection (CSV/Excel) by prefixing the
-//   value with an apostrophe when it starts with a character (=, +, -, @)
-//   that Excel/Sheets would otherwise interpret as the start of a formula.
-//   This matters because username/officeLabel/phoneLabels come from external
-//   panels (ZonaEpic/Zeus) and are not controlled by this app.
+// escapa comillas y neutraliza injection de formulas (=, +, -, @), el
+// username/oficina vienen de los paneles externos asi que no controlamos eso
 function csvCell(value) {
   let text = value === null || value === undefined ? "" : String(value);
 
@@ -1010,9 +1005,7 @@ async function syncZonaBrowserCache(runtimeConfig) {
     const balancesPayload = await fetchZonaBalances(runtimeConfig);
     balances = balancesPayload.balances || {};
   } catch {
-    // Si falla la consulta de saldos no abortamos el sync completo: los
-    // usuarios quedan con currentBalance = null y el filtro "tiene fichas"
-    // simplemente no los muestra hasta el proximo sync exitoso.
+    // si falla, quedan sin saldo hasta el proximo sync
   }
 
   return {

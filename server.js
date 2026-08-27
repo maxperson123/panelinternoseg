@@ -142,14 +142,8 @@ function getDefaultRange(lookbackDays = 30) {
 }
 
 async function getSessionToken(config) {
-  // Reuse a just-scraped token for a short window instead of re-fetching
-  // report_balances.php on every single call. The frontend's initial
-  // "full import" drives one HTTP request per day (potentially hundreds when
-  // importing months of history), and each of those previously triggered a
-  // brand new token scrape even though the session's CSRF token doesn't
-  // rotate that fast. This cache is per-process (in memory) and short-lived,
-  // so a cold start / new deploy / stale-token edge case still refreshes
-  // normally after the TTL expires.
+  // cache the token a bit, the full import does one request per day and
+  // would otherwise re-scrape report_balances.php on every single one
   const cacheKey = `${config.baseUrl}::${config.sessionId}`;
   const cached = sessionTokenCache.get(cacheKey);
   const now = Date.now();
@@ -542,10 +536,7 @@ function parseVCardEntries(rawContent) {
 }
 
 async function loadContactsDirectory() {
-  // Zeus snapshots can be polled every ~15s, and previously each of those
-  // calls did a readdir + stat() of every office directory/.vcf file just to
-  // check whether the on-disk contacts changed, even though the directory
-  // rarely does. Skip that disk I/O entirely if we verified it recently.
+  // skip re-reading the dir if we already checked recently (zeus polls ~15s)
   const now = Date.now();
   if (contactsDirectoryCache && now - contactsDirectoryLastCheckedAt < contactsDirectoryCheckTtlMs) {
     return contactsDirectoryCache;
@@ -883,12 +874,8 @@ function clampDateRange(fromDate, toDateExclusive, fallbackDays) {
     safeFrom = addDays(safeToExclusive, -fallbackDays);
   }
 
-  // If the whole requested window is older than what ZonaEpic supports
-  // (maxLookbackDays), report it explicitly instead of silently substituting
-  // a completely different range. Previously this branch reset safeFrom/
-  // safeToExclusive to the full last-60-days window, so a request for an old,
-  // out-of-range single day silently returned 60 days of unrelated data
-  // instead of failing or being clamped predictably.
+  // fail explicitly if the window is fully out of range instead of quietly
+  // falling back to the last 60 days
   if (safeToExclusive <= earliestAllowed) {
     return {
       from: safeFrom,
@@ -912,9 +899,8 @@ function getRowKey(row) {
   return row.join("|");
 }
 
-// Builds a multiset (key -> {row, count}) of the rows that share the exact
-// same column values, so legitimate repeated rows (two distinct loads that
-// happen to have identical date/origin/destination/amount) are not collapsed.
+// key -> {row, count}, so rows with identical columns don't get collapsed
+// into one when they're actually separate loads
 function buildRowMultiset(rows) {
   const counts = new Map();
 
@@ -937,14 +923,8 @@ function buildRowMultiset(rows) {
 }
 
 function mergeRows(existingRows, newRows) {
-  // Overlapping windows (e.g. the incremental re-fetch of the last known day)
-  // return the same underlying rows again, so we can't just union the two
-  // arrays as-is or genuinely repeated identical rows would double up on
-  // every refresh. Instead we take, per distinct row key, the MAX count seen
-  // between the existing cache and the new fetch: an unchanged overlap keeps
-  // its count, while a day that gained more matching transactions since the
-  // last sync grows to the new (larger) count. This avoids both duplicating
-  // re-fetched rows and silently dropping genuinely repeated ones.
+  // take the max count per key instead of summing, overlapping windows
+  // re-fetch the same rows and we'd double them up every refresh otherwise
   const existingCounts = buildRowMultiset(existingRows);
   const newCounts = buildRowMultiset(newRows);
   const allKeys = new Set([...existingCounts.keys(), ...newCounts.keys()]);
@@ -1702,11 +1682,7 @@ async function handleApiWindow(requestUrl, response) {
     );
 
     if (safeRange.outOfRange) {
-      // The requested window falls entirely before what ZonaEpic supports
-      // (maxLookbackDays). Fail fast with the same "historico inicial" wording
-      // the frontend's full-import loop already knows how to handle (it skips
-      // the day and moves on), instead of hitting the network for a doomed
-      // request or silently substituting an unrelated 60-day range.
+      // same "historico inicial" error the full-import loop already skips over
       sendJson(response, 409, {
         error: "ZonaEpic no devolvio datos para este tramo historico inicial.",
         code: "UNSUPPORTED_RANGE",
@@ -1862,9 +1838,8 @@ async function handleStatic(requestUrl, response) {
   let pathname = requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname;
   const filePath = path.normalize(path.join(publicDir, pathname));
 
-  // Use path.relative instead of a plain startsWith prefix check: a prefix
-  // match would wrongly accept a sibling directory like "public-backup"
-  // because the string "/app/public-backup" starts with "/app/public".
+  // path.relative instead of startsWith, that would also match a sibling
+  // dir like "public-backup"
   const relativeToPublic = path.relative(publicDir, filePath);
   const escapesPublicDir =
     relativeToPublic === ".." ||
